@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>V12 Stopwatch â€“ YouTube Playlist Timer</title>
+  <title>V13 Stopwatch â€“ YouTube Playlist Timer</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     html, body, #root { height: 100%; }
@@ -23,43 +23,29 @@
     const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
     const MUSIC_PRESETS = [
-      { label: '1s', ms: 1000 },
-      { label: '2s', ms: 2000 },
-      { label: '3s', ms: 3000 },
-      { label: '5s', ms: 5000 },
-      { label: '10s', ms: 10000 },
-      { label: '20s', ms: 20000 },
-      { label: '30s', ms: 30000 },
-      { label: '1:30', ms: 90000 },
-      { label: '2:00', ms: 120000 },
-      { label: '1 min', ms: 60000 },
-      { label: 'Full song', ms: null },
+      { label: '1s', ms: 1000 }, { label: '2s', ms: 2000 }, { label: '3s', ms: 3000 },
+      { label: '5s', ms: 5000 }, { label: '10s', ms: 10000 }, { label: '20s', ms: 20000 },
+      { label: '30s', ms: 30000 }, { label: '1:30', ms: 90000 }, { label: '2:00', ms: 120000 },
+      { label: '1 min', ms: 60000 }, { label: 'Full song', ms: null },
     ];
     const MODES = ['Single', 'Next', 'Next+Shuffle'];
     const DEFAULT_PLAYLIST_SLOTS = Array.from({ length: 20 }, () => '');
-    const LS_KEY = 'v12_stopwatch_settings';
-    const LEGACY_KEYS = ['v11_stopwatch_settings', 'v10_stopwatch_settings', 'v9_stopwatch_settings', 'v8_stopwatch_settings'];
+    const LS_KEY = 'v13_stopwatch_settings';
+    const LEGACY_KEYS = ['v12_stopwatch_settings','v11_stopwatch_settings','v10_stopwatch_settings','v9_stopwatch_settings','v8_stopwatch_settings'];
 
     const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
     const pad2 = (n) => String(n).padStart(2, '0');
     const clockHHMM = () => { const d = new Date(); return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); };
-    const extractPlaylistId = (input) => {
-      if (!input) return '';
-      const s = input.trim();
-      if (/^[A-Za-z0-9_-]{10,}$/.test(s)) return s;
-      try { const url = new URL(s); const list = url.searchParams.get('list'); if (list) return list; } catch (_) {}
-      return s;
-    };
+    const extractPlaylistId = (input) => { if (!input) return ''; const s = input.trim(); if (/^[A-Za-z0-9_-]{10,}$/.test(s)) return s; try { const url = new URL(s); const list = url.searchParams.get('list'); if (list) return list; } catch (_) {} return s; };
 
     const SEC_MODES = { ON: 'on', OFF: 'off', FIRST_MIN: 'first_min', EVERY_10S: 'every_10s' };
-
-    function formatDisplay(ms, secondsMode) {
+    function formatDisplay(ms, mode) {
       const totalSec = Math.floor(Math.max(0, ms)/1000);
       const mm = Math.floor(totalSec/60);
       let ss = totalSec % 60;
-      if (secondsMode === SEC_MODES.OFF) return pad2(mm);
-      if (secondsMode === SEC_MODES.FIRST_MIN) return ms < 60000 ? (pad2(mm)+':'+pad2(ss)) : pad2(mm);
-      if (secondsMode === SEC_MODES.EVERY_10S) { ss = Math.floor(ss/10)*10; return pad2(mm)+':'+pad2(ss); }
+      if (mode === SEC_MODES.OFF) return pad2(mm);
+      if (mode === SEC_MODES.FIRST_MIN) return ms < 60000 ? (pad2(mm)+':'+pad2(ss)) : pad2(mm);
+      if (mode === SEC_MODES.EVERY_10S) { ss = Math.floor(ss/10)*10; return pad2(mm)+':'+pad2(ss); }
       return pad2(mm)+':'+pad2(ss);
     }
 
@@ -68,9 +54,9 @@
       const [running, setRunning] = useState(false);
       const [paused, setPaused] = useState(false);
 
-      const [showControls, setShowControls] = useState(true);
+      const [auxVisible, setAuxVisible] = useState(true);
       const [pinned, setPinned] = useState(false);
-      const controlsTimerRef = useRef(null);
+      const auxTimerRef = useRef(null);
 
       const [secondsMode, setSecondsMode] = useState(SEC_MODES.ON);
 
@@ -104,9 +90,9 @@
             if (typeof p.activeIndex === 'number') setActiveIndex(clamp(p.activeIndex, 0, 19));
             if (typeof p.musicLenMs === 'number' || p.musicLenMs === null) setMusicLenMs(p.musicLenMs);
             if (MODES.includes(p.mode)) setMode(p.mode);
-            if (p.secondsMode && Object.values(SEC_MODES).includes(p.secondsMode)) setSecondsMode(p.secondsMode);
+            if (Object.values(SEC_MODES).includes(p.secondsMode)) setSecondsMode(p.secondsMode);
           }
-        } catch (_) {}
+        } catch(_) {}
       }, []);
 
       useEffect(() => { localStorage.setItem(LS_KEY, JSON.stringify({ playlistSlots, activeIndex, musicLenMs, mode, secondsMode })); }, [playlistSlots, activeIndex, musicLenMs, mode, secondsMode]);
@@ -117,8 +103,8 @@
         function onReady() { playerReadyRef.current = true; playlistLoadedRef.current = false; }
         function onStateChange(evt) {
           if (evt?.data === 0 && musicLenMs === null) {
-            if (mode === 'Next+Shuffle') { try { playerRef.current.setShuffle(true); playerRef.current.nextVideo(); playerRef.current.playVideo(); } catch (_) {} }
-            else if (mode === 'Next') { try { playerRef.current.setShuffle(false); playerRef.current.nextVideo(); playerRef.current.playVideo(); } catch (_) {} }
+            if (mode === 'Next+Shuffle') { try { playerRef.current.setShuffle(true); playerRef.current.nextVideo(); playerRef.current.playVideo(); } catch(_) {} }
+            else if (mode === 'Next') { try { playerRef.current.setShuffle(false); playerRef.current.nextVideo(); playerRef.current.playVideo(); } catch(_) {} }
           }
         }
         function initPlayer() {
@@ -135,24 +121,19 @@
       useEffect(() => { playlistLoadedRef.current = false; }, [activePlaylistId]);
 
       const clearMusicTimer = useCallback(() => { if (musicStopTimeoutRef.current) { clearTimeout(musicStopTimeoutRef.current); musicStopTimeoutRef.current = null; } }, []);
-
-      const stopMusicOnly = useCallback((e) => { e?.stopPropagation?.(); clearMusicTimer(); try { playerRef.current?.stopVideo(); } catch (_) {} }, [clearMusicTimer]);
-
+      const stopMusicOnly = useCallback((e) => { e?.stopPropagation?.(); clearMusicTimer(); try { playerRef.current?.stopVideo(); } catch(_) {} }, [clearMusicTimer]);
       const rescheduleMusicStop = useCallback(() => {
         clearMusicTimer();
         if (typeof musicLenMs === 'number' && musicLenMs > 0) {
           musicStopTimeoutRef.current = setTimeout(() => { try { playerRef.current?.pauseVideo(); } catch(_) {} musicStopTimeoutRef.current = null; }, musicLenMs);
         }
       }, [musicLenMs, clearMusicTimer]);
-
       const tryPlayWithUnmute = useCallback(() => {
         const p = playerRef.current; if (!p) return;
-        try {
-          p.unMute?.(); p.setVolume?.(100); p.playVideo?.();
-          setTimeout(() => { try { const s = p.getPlayerState?.(); if (s !== 1) { p.mute?.(); p.playVideo?.(); setTimeout(() => { try { p.unMute?.(); } catch(_) {} }, 350); } } catch(_) {} }, 250);
+        try { p.unMute?.(); p.setVolume?.(100); p.playVideo?.();
+          setTimeout(() => { try { const st = p.getPlayerState?.(); if (st !== 1) { p.mute?.(); p.playVideo?.(); setTimeout(() => { try { p.unMute?.(); } catch(_) {} }, 350); } } catch(_) {} }, 250);
         } catch(_) {}
       }, []);
-
       const ensureLoadedAndPlay = useCallback(() => {
         if (!playerReadyRef.current || !playerRef.current || !activePlaylistId) return;
         const p = playerRef.current;
@@ -165,17 +146,10 @@
         } catch (e) { console.warn('YT play error:', e); }
       }, [activePlaylistId, mode, tryPlayWithUnmute, rescheduleMusicStop]);
 
-      const playPrev = useCallback((e) => {
-        e?.stopPropagation?.(); if (!playerReadyRef.current || !playerRef.current || !activePlaylistId) return;
-        const p = playerRef.current;
-        try { if (!playlistLoadedRef.current) { p.loadPlaylist({ listType: 'playlist', list: activePlaylistId, index: 0 }); playlistLoadedRef.current = true; } p.previousVideo?.(); tryPlayWithUnmute(); rescheduleMusicStop(); } catch(_) {}
-      }, [activePlaylistId, tryPlayWithUnmute, rescheduleMusicStop]);
-
-      const playNext = useCallback((e) => {
-        e?.stopPropagation?.(); if (!playerReadyRef.current || !playerRef.current || !activePlaylistId) return;
-        const p = playerRef.current;
-        try { if (!playlistLoadedRef.current) { p.loadPlaylist({ listType: 'playlist', list: activePlaylistId, index: 0 }); playlistLoadedRef.current = true; } p.nextVideo?.(); tryPlayWithUnmute(); rescheduleMusicStop(); } catch(_) {}
-      }, [activePlaylistId, tryPlayWithUnmute, rescheduleMusicStop]);
+      const playPrev = useCallback((e) => { e?.stopPropagation?.(); if (!playerReadyRef.current || !playerRef.current || !activePlaylistId) return;
+        const p = playerRef.current; try { if (!playlistLoadedRef.current) { p.loadPlaylist({ listType: 'playlist', list: activePlaylistId, index: 0 }); playlistLoadedRef.current = true; } p.previousVideo?.(); tryPlayWithUnmute(); rescheduleMusicStop(); } catch(_) {} }, [activePlaylistId, tryPlayWithUnmute, rescheduleMusicStop]);
+      const playNext = useCallback((e) => { e?.stopPropagation?.(); if (!playerReadyRef.current || !playerRef.current || !activePlaylistId) return;
+        const p = playerRef.current; try { if (!playlistLoadedRef.current) { p.loadPlaylist({ listType: 'playlist', list: activePlaylistId, index: 0 }); playlistLoadedRef.current = true; } p.nextVideo?.(); tryPlayWithUnmute(); rescheduleMusicStop(); } catch(_) {} }, [activePlaylistId, tryPlayWithUnmute, rescheduleMusicStop]);
 
       const tick = useCallback((now) => {
         if (!running || paused) return;
@@ -184,28 +158,21 @@
         setElapsed(newElapsed);
         rafRef.current = requestAnimationFrame(tick);
       }, [elapsed, running, paused]);
-
       useEffect(() => { if (running && !paused) { rafRef.current = requestAnimationFrame(tick); return () => cancelAnimationFrame(rafRef.current); } return () => {}; }, [running, paused, tick]);
 
-      const revealControls = useCallback((ms=13000) => {
-        setShowControls(true);
-        if (controlsTimerRef.current) { clearTimeout(controlsTimerRef.current); controlsTimerRef.current = null; }
-        if (!pinned) controlsTimerRef.current = setTimeout(() => setShowControls(false), ms);
+      // Aux controls show/hide (13s unless pinned)
+      const showAux = useCallback((ms=13000) => {
+        setAuxVisible(true);
+        if (auxTimerRef.current) { clearTimeout(auxTimerRef.current); auxTimerRef.current = null; }
+        if (!pinned) auxTimerRef.current = setTimeout(() => setAuxVisible(false), ms);
       }, [pinned]);
+      const hideAux = useCallback(() => { if (auxTimerRef.current) { clearTimeout(auxTimerRef.current); auxTimerRef.current = null; } setAuxVisible(false); }, []);
 
-      const hideControls = useCallback(() => { if (controlsTimerRef.current) { clearTimeout(controlsTimerRef.current); controlsTimerRef.current = null; } setShowControls(false); }, []);
-
-      const startStopwatchAndMusic = useCallback(() => {
-        setRunning(true); setPaused(false); startTimeRef.current = performance.now(); setElapsed(0); ensureLoadedAndPlay(); if (!pinned) setShowControls(false);
-      }, [ensureLoadedAndPlay, pinned]);
-
+      const startStopwatchAndMusic = useCallback(() => { setRunning(true); setPaused(false); startTimeRef.current = performance.now(); setElapsed(0); ensureLoadedAndPlay(); if (!pinned) setAuxVisible(false); }, [ensureLoadedAndPlay, pinned]);
       const resetStopwatchAndMusic = useCallback(() => { if (!running) { startStopwatchAndMusic(); return; } startTimeRef.current = performance.now(); setElapsed(0); ensureLoadedAndPlay(); }, [running, startStopwatchAndMusic, ensureLoadedAndPlay]);
 
       const handleGlobalTap = useCallback(() => { resetStopwatchAndMusic(); }, [resetStopwatchAndMusic]);
-
       const handlePauseToggle = useCallback((e) => { e?.stopPropagation?.(); if (!running) return; setPaused((p) => { const next = !p; if (!next) startTimeRef.current = performance.now() - elapsed; return next; }); }, [running, elapsed]);
-
-      const selectMusicPreset = useCallback((preset, e) => { e?.stopPropagation?.(); setMusicLenMs(preset.ms); }, []);
 
       useEffect(() => {
         const onKey = (e) => {
@@ -214,15 +181,15 @@
           const key = (e.key || '').toLowerCase();
           if (key === ' ') { e.preventDefault(); resetStopwatchAndMusic(); }
           else if (key === 'p') { e.preventDefault(); handlePauseToggle(); }
-          else if (key === 's') { e.preventDefault(); if (showControls) hideControls(); else revealControls(13000); lastSAtRef.current = Date.now(); }
-          else if (key === 'e') { if (Date.now() - lastSAtRef.current < 800) { e.preventDefault(); setSettingsOpen(true); revealControls(13000); lastSAtRef.current = 0; } }
+          else if (key === 's') { e.preventDefault(); if (auxVisible) hideAux(); else showAux(13000); lastSAtRef.current = Date.now(); }
+          else if (key === 'e') { if (Date.now() - lastSAtRef.current < 800) { e.preventDefault(); setSettingsOpen(true); showAux(13000); lastSAtRef.current = 0; } }
           else if (key === 'f') { e.preventDefault(); toggleFullscreen(); }
           else if (key === 'arrowright') { e.preventDefault(); playNext(); }
           else if (key === 'arrowleft') { e.preventDefault(); playPrev(); }
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-      }, [resetStopwatchAndMusic, handlePauseToggle, revealControls, hideControls, playPrev, playNext, showControls]);
+      }, [resetStopwatchAndMusic, handlePauseToggle, showAux, hideAux, auxVisible, playPrev, playNext]);
 
       const [isFs, setIsFs] = useState(false);
       const toggleFullscreen = useCallback(() => { const el = document.documentElement; if (!document.fullscreenElement) { el.requestFullscreen?.(); setIsFs(true); } else { document.exitFullscreen?.(); setIsFs(false); } }, []);
@@ -230,13 +197,11 @@
 
       const exportSettings = useCallback((e) => {
         e?.stopPropagation?.();
-        const data = { version: 'v12', playlistSlots, activeIndex, musicLenMs, mode, secondsMode };
+        const data = { version: 'v13', playlistSlots, activeIndex, musicLenMs, mode, secondsMode };
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'stopwatch-settings.json'; a.click(); URL.revokeObjectURL(a.href);
       }, [playlistSlots, activeIndex, musicLenMs, mode, secondsMode]);
-
       const importSettingsFromFile = useCallback((e) => { e?.stopPropagation?.(); fileInputRef.current?.click(); }, []);
-
       const onImportFileChange = useCallback((e) => {
         const file = e.target.files && e.target.files[0]; if (!file) return;
         const reader = new FileReader();
@@ -254,14 +219,14 @@
       }, []);
 
       return (
-        <div className="min-h-screen w-full bg-blue-950 text-blue-200 relative select-none" onClick={handleGlobalTap}>
+        <div className="min-h-screen w-full bg-blue-950 text-blue-200 flex flex-col" onClick={handleGlobalTap}>
           <input type="file" ref={fileInputRef} accept="application/json" className="hidden" onChange={onImportFileChange} />
 
-          {/* Top cluster */}
-          <div className="absolute top-3 left-4 right-4 px-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="mr-3 font-extrabold" style={{ color: '#93C5FD' }}>
-                <span className="text-2xl md:text-4xl leading-none">{clock}</span>
+          {/* Sticky Top Bar */}
+          <header className="sticky top-0 z-40 w-full bg-blue-950/95 backdrop-blur border-b border-blue-900">
+            <div className="px-4 py-2 flex flex-wrap items-center gap-2">
+              <div className="mr-2 font-extrabold flex-shrink-0" style={{ color: '#93C5FD' }}>
+                <span className="text-4xl md:text-6xl leading-none">{clock}</span>
               </div>
               <div className="flex items-center rounded-xl border border-blue-800 overflow-hidden">
                 {MODES.map((m, idx) => (
@@ -273,49 +238,45 @@
                 <button onClick={playNext} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800">Next</button>
               </div>
               <div className="flex-1" />
-              <div className="hidden lg:flex flex-wrap gap-2">
-                {MUSIC_PRESETS.map((p) => (
-                  <button key={p.label} onClick={(e) => selectMusicPreset(p, e)} className={"px-3 py-2 rounded-xl border transition " + (musicLenMs===p.ms ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>{p.label}</button>
-                ))}
-              </div>
               <div className="flex items-center gap-2">
-                <button onClick={(e) => { e.stopPropagation(); setSettingsOpen(true); revealControls(13000); }} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800">Settings</button>
+                <button onClick={(e) => { e.stopPropagation(); setSettingsOpen(true); showAux(13000); }} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800">Settings</button>
                 <button onClick={handlePauseToggle} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800">{paused ? "Resume" : "Pause"}</button>
                 <button onClick={stopMusicOnly} className="px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500">Stop Music</button>
                 <FsButton />
               </div>
             </div>
-          </div>
+          </header>
 
-          {/* Bottom reveal zone */}
-          <div className="fixed bottom-0 left-0 w-full" style={{ height: '10vh' }} onClick={(e) => { e.stopPropagation(); if (showControls) hideControls(); else revealControls(13000); }} />
+          <main className="flex-1 relative">
+            <div className="fixed bottom-0 left-0 w-full" style={{ height: '10vh' }} onClick={(e) => { e.stopPropagation(); if (auxVisible) { setPinned(false); hideAux(); } else { showAux(13000); } }} />
+            <button onClick={(e) => { e.stopPropagation(); if (auxVisible) { setPinned(false); hideAux(); } else { showAux(13000); } }} className="fixed bottom-6 left-1/2 -translate-x-1/2 w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-500 shadow-lg active:scale-95 transition" title="Show/Hide controls"></button>
 
-          {/* Floating ball toggle */}
-          <button onClick={(e) => { e.stopPropagation(); if (showControls) { setPinned(false); hideControls(); } else { revealControls(13000); } }} className="fixed bottom-6 left-1/2 -translate-x-1/2 w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-500 shadow-lg active:scale-95 transition" title="Show/Hide controls"></button>
-
-          {/* Stopwatch area */}
-          <div className="grid place-items-center" style={{ marginTop: '25vh' }} onClick={(e) => { e.stopPropagation(); resetStopwatchAndMusic(); }}>
-            <div className="text-[20vw] md:text-[12rem] leading-none font-extrabold drop-shadow" style={{ color: '#93C5FD', textShadow: '0 0 12px rgba(147,197,253,0.15)' }} aria-live="polite">
-              {formatDisplay(elapsed, secondsMode)}
+            <div className="grid place-items-center" style={{ marginTop: '25vh' }} onClick={(e) => { e.stopPropagation(); resetStopwatchAndMusic(); }}>
+              <div className="text-[20vw] md:text-[12rem] leading-none font-extrabold drop-shadow" style={{ color: '#93C5FD', textShadow: '0 0 12px rgba(147,197,253,0.15)' }} aria-live="polite">
+                {formatDisplay(elapsed, secondsMode)}
+              </div>
             </div>
-          </div>
 
-          {/* Below stopwatch controls */}
-          <div className="mt-4 flex flex-col items-center gap-3" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-2">
-              <button onClick={() => { setPinned((v) => !v); if (!pinned) revealControls(13000); }} className={"px-3 py-2 rounded-xl border " + (pinned ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>{pinned ? "Unpin controls" : "Pin controls"}</button>
-            </div>
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              <button onClick={() => setSecondsMode(SEC_MODES.ON)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.ON ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>Show seconds</button>
-              <button onClick={() => setSecondsMode(SEC_MODES.OFF)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.OFF ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>Hide seconds</button>
-              <button onClick={() => setSecondsMode(SEC_MODES.FIRST_MIN)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.FIRST_MIN ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>First minute</button>
-              <button onClick={() => setSecondsMode(SEC_MODES.EVERY_10S)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.EVERY_10S ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>Every 10s</button>
-            </div>
-          </div>
+            {auxVisible && (
+              <div className="mt-4 flex flex-col items-center gap-3 px-4" onClick={(e) => e.stopPropagation()}>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button onClick={() => { setPinned(v => !v); if (!pinned) showAux(13000); }} className={"px-3 py-2 rounded-xl border " + (pinned ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>
+                    {pinned ? "Unpin controls" : "Pin controls"}
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button onClick={() => setSecondsMode(SEC_MODES.ON)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.ON ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>Show seconds</button>
+                  <button onClick={() => setSecondsMode(SEC_MODES.OFF)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.OFF ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>Hide seconds</button>
+                  <button onClick={() => setSecondsMode(SEC_MODES.FIRST_MIN)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.FIRST_MIN ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>First minute</button>
+                  <button onClick={() => setSecondsMode(SEC_MODES.EVERY_10S)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.EVERY_10S ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>Every 10s</button>
+                </div>
+              </div>
+            )}
 
-          <div className="mt-6 text-center text-sm text-blue-300">Active playlist slot: <span className="text-blue-100 font-medium">{activeIndex + 1}</span></div>
+            <div className="mt-6 text-center text-sm text-blue-300">Active playlist slot: <span className="text-blue-100 font-medium">{activeIndex + 1}</span></div>
 
-          <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V12</div>
+            <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V13</div>
+          </main>
 
           {settingsOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={(e) => { e.stopPropagation(); setSettingsOpen(false); }}>
@@ -329,7 +290,7 @@
                   </div>
                 </div>
                 <div className="max-h-[60vh] overflow-y-auto p-5 space-y-4">
-                  <p className="text-sm text-blue-300">Add up to 20 YouTube playlists. Paste a playlist URL or ID. Select the active slot.</p>
+                  <p className="text-sm text-blue-300">Add up to 20 YouTube playlists. Paste a playlist URL or playlist ID. Select the active slot.</p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {playlistSlots.map((val, i) => (
                       <div key={i} className="rounded-xl border border-blue-900 p-3">
