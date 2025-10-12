@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>V11 Stopwatch â€“ YouTube Playlist Timer</title>
+  <title>V12 Stopwatch â€“ YouTube Playlist Timer</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     html, body, #root { height: 100%; }
@@ -12,20 +12,16 @@
 </head>
 <body class="bg-blue-950 text-blue-200">
   <div id="root" class="h-full"></div>
-  <!-- Keep the iframe present (1x1 offscreen) to satisfy autoplay; NOT display:none -->
   <div id="yt-player" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;"></div>
 
-  <!-- React + Babel -->
   <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- YouTube IFrame API -->
   <script src="https://www.youtube.com/iframe_api"></script>
 
   <script type="text/babel">
     const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-    // Music length presets (do NOT affect stopwatch)
     const MUSIC_PRESETS = [
       { label: '1s', ms: 1000 },
       { label: '2s', ms: 2000 },
@@ -41,8 +37,8 @@
     ];
     const MODES = ['Single', 'Next', 'Next+Shuffle'];
     const DEFAULT_PLAYLIST_SLOTS = Array.from({ length: 20 }, () => '');
-    const LS_KEY = 'v11_stopwatch_settings'; // new key
-    const LEGACY_KEYS = ['v10_stopwatch_settings', 'v9_stopwatch_settings', 'v8_stopwatch_settings'];
+    const LS_KEY = 'v12_stopwatch_settings';
+    const LEGACY_KEYS = ['v11_stopwatch_settings', 'v10_stopwatch_settings', 'v9_stopwatch_settings', 'v8_stopwatch_settings'];
 
     const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
     const pad2 = (n) => String(n).padStart(2, '0');
@@ -54,153 +50,106 @@
       try { const url = new URL(s); const list = url.searchParams.get('list'); if (list) return list; } catch (_) {}
       return s;
     };
-    const formatMMSS = (ms, showSeconds=true) => {
+
+    const SEC_MODES = { ON: 'on', OFF: 'off', FIRST_MIN: 'first_min', EVERY_10S: 'every_10s' };
+
+    function formatDisplay(ms, secondsMode) {
       const totalSec = Math.floor(Math.max(0, ms)/1000);
       const mm = Math.floor(totalSec/60);
-      const ss = totalSec % 60;
-      return showSeconds ? (pad2(mm) + ':' + pad2(ss)) : pad2(mm);
-    };
+      let ss = totalSec % 60;
+      if (secondsMode === SEC_MODES.OFF) return pad2(mm);
+      if (secondsMode === SEC_MODES.FIRST_MIN) return ms < 60000 ? (pad2(mm)+':'+pad2(ss)) : pad2(mm);
+      if (secondsMode === SEC_MODES.EVERY_10S) { ss = Math.floor(ss/10)*10; return pad2(mm)+':'+pad2(ss); }
+      return pad2(mm)+':'+pad2(ss);
+    }
 
     function App() {
-      // Stopwatch
       const [elapsed, setElapsed] = useState(0);
       const [running, setRunning] = useState(false);
       const [paused, setPaused] = useState(false);
-      const [showSeconds, setShowSeconds] = useState(true);
 
-      // Controls visibility & pin
       const [showControls, setShowControls] = useState(true);
       const [pinned, setPinned] = useState(false);
       const controlsTimerRef = useRef(null);
 
-      // Music
-      const [musicLenMs, setMusicLenMs] = useState(MUSIC_PRESETS[2].ms); // default 3s
+      const [secondsMode, setSecondsMode] = useState(SEC_MODES.ON);
+
+      const [musicLenMs, setMusicLenMs] = useState(MUSIC_PRESETS[2].ms);
       const [mode, setMode] = useState(MODES[0]);
       const [playlistSlots, setPlaylistSlots] = useState(DEFAULT_PLAYLIST_SLOTS);
       const [activeIndex, setActiveIndex] = useState(0);
       const [settingsOpen, setSettingsOpen] = useState(false);
 
-      // YouTube
       const playerRef = useRef(null);
       const playerReadyRef = useRef(false);
       const playlistLoadedRef = useRef(false);
       const musicStopTimeoutRef = useRef(null);
 
-      // Timing
       const rafRef = useRef(null);
       const startTimeRef = useRef(null);
 
-      // Clock (HH:MM, bigger, same color as digits)
       const [clock, setClock] = useState(clockHHMM());
-      useEffect(() => {
-        const id = setInterval(() => setClock(clockHHMM()), 1000);
-        return () => clearInterval(id);
-      }, []);
+      useEffect(() => { const id = setInterval(() => setClock(clockHHMM()), 1000); return () => clearInterval(id); }, []);
 
-      // Keyboard sequence for 's' then 'e'
       const lastSAtRef = useRef(0);
-
-      // JSON import
       const fileInputRef = useRef(null);
 
-      // Load settings; migrate from legacy if needed
       useEffect(() => {
         try {
           let raw = localStorage.getItem(LS_KEY);
-          if (!raw) {
-            for (const k of LEGACY_KEYS) {
-              raw = localStorage.getItem(k);
-              if (raw) break;
-            }
-          }
+          if (!raw) { for (const k of LEGACY_KEYS) { raw = localStorage.getItem(k); if (raw) break; } }
           if (raw) {
             const p = JSON.parse(raw);
-            if (Array.isArray(p.playlistSlots)) {
-              const merged = [...DEFAULT_PLAYLIST_SLOTS].map((_, i) => p.playlistSlots[i] || '');
-              setPlaylistSlots(merged);
-            }
+            if (Array.isArray(p.playlistSlots)) setPlaylistSlots([...DEFAULT_PLAYLIST_SLOTS].map((_, i) => p.playlistSlots[i] || ''));
             if (typeof p.activeIndex === 'number') setActiveIndex(clamp(p.activeIndex, 0, 19));
             if (typeof p.musicLenMs === 'number' || p.musicLenMs === null) setMusicLenMs(p.musicLenMs);
             if (MODES.includes(p.mode)) setMode(p.mode);
-            if (typeof p.showSeconds === 'boolean') setShowSeconds(p.showSeconds);
+            if (p.secondsMode && Object.values(SEC_MODES).includes(p.secondsMode)) setSecondsMode(p.secondsMode);
           }
         } catch (_) {}
       }, []);
 
-      // Persist settings
-      useEffect(() => {
-        localStorage.setItem(LS_KEY, JSON.stringify({ playlistSlots, activeIndex, musicLenMs, mode, showSeconds }));
-      }, [playlistSlots, activeIndex, musicLenMs, mode, showSeconds]);
+      useEffect(() => { localStorage.setItem(LS_KEY, JSON.stringify({ playlistSlots, activeIndex, musicLenMs, mode, secondsMode })); }, [playlistSlots, activeIndex, musicLenMs, mode, secondsMode]);
 
       const activePlaylistId = useMemo(() => extractPlaylistId(playlistSlots[activeIndex] || ''), [playlistSlots, activeIndex]);
 
-      // YouTube API
       useEffect(() => {
-        function onReady() {
-          playerReadyRef.current = true;
-          playlistLoadedRef.current = false;
-        }
+        function onReady() { playerReadyRef.current = true; playlistLoadedRef.current = false; }
         function onStateChange(evt) {
-          // Full song behavior: when a track ends, advance if Next/Next+Shuffle
           if (evt?.data === 0 && musicLenMs === null) {
-            if (mode === 'Next+Shuffle') {
-              try { playerRef.current.setShuffle(true); playerRef.current.nextVideo(); playerRef.current.playVideo(); } catch (_) {}
-            } else if (mode === 'Next') {
-              try { playerRef.current.setShuffle(false); playerRef.current.nextVideo(); playerRef.current.playVideo(); } catch (_) {}
-            }
+            if (mode === 'Next+Shuffle') { try { playerRef.current.setShuffle(true); playerRef.current.nextVideo(); playerRef.current.playVideo(); } catch (_) {} }
+            else if (mode === 'Next') { try { playerRef.current.setShuffle(false); playerRef.current.nextVideo(); playerRef.current.playVideo(); } catch (_) {} }
           }
         }
         function initPlayer() {
           if (playerRef.current || !window.YT?.Player) return;
           playerRef.current = new window.YT.Player('yt-player', {
-            height: '1',
-            width: '1',
-            playerVars: {
-              autoplay: 0, controls: 0, modestbranding: 1, rel: 0, playsinline: 1, enablejsapi: 1,
-              origin: window.location.origin
-            },
+            height: '1', width: '1',
+            playerVars: { autoplay: 0, controls: 0, modestbranding: 1, rel: 0, playsinline: 1, enablejsapi: 1, origin: window.location.origin },
             events: { onReady, onStateChange },
           });
         }
-        if (window.YT?.Player) initPlayer();
-        else { window.onYouTubeIframeAPIReady = initPlayer; }
+        if (window.YT?.Player) initPlayer(); else { window.onYouTubeIframeAPIReady = initPlayer; }
       }, [musicLenMs, mode]);
 
       useEffect(() => { playlistLoadedRef.current = false; }, [activePlaylistId]);
 
-      // Music helpers
-      const clearMusicTimer = useCallback(() => {
-        if (musicStopTimeoutRef.current) {
-          clearTimeout(musicStopTimeoutRef.current);
-          musicStopTimeoutRef.current = null;
-        }
-      }, []);
+      const clearMusicTimer = useCallback(() => { if (musicStopTimeoutRef.current) { clearTimeout(musicStopTimeoutRef.current); musicStopTimeoutRef.current = null; } }, []);
 
-      const stopMusicOnly = useCallback((e) => {
-        e?.stopPropagation?.();
+      const stopMusicOnly = useCallback((e) => { e?.stopPropagation?.(); clearMusicTimer(); try { playerRef.current?.stopVideo(); } catch (_) {} }, [clearMusicTimer]);
+
+      const rescheduleMusicStop = useCallback(() => {
         clearMusicTimer();
-        try { playerRef.current?.stopVideo(); } catch (_) {}
-      }, [clearMusicTimer]);
+        if (typeof musicLenMs === 'number' && musicLenMs > 0) {
+          musicStopTimeoutRef.current = setTimeout(() => { try { playerRef.current?.pauseVideo(); } catch(_) {} musicStopTimeoutRef.current = null; }, musicLenMs);
+        }
+      }, [musicLenMs, clearMusicTimer]);
 
-      // Hardened playback for Chrome: try unmuted; if blocked, start muted then unmute shortly after
       const tryPlayWithUnmute = useCallback(() => {
-        const p = playerRef.current;
-        if (!p) return;
+        const p = playerRef.current; if (!p) return;
         try {
-          p.unMute?.();
-          p.setVolume?.(100);
-          p.playVideo?.();
-          // Double-check after a short delay; if not playing, fallback to mute-start
-          setTimeout(() => {
-            try {
-              const state = p.getPlayerState?.(); // 1 = playing
-              if (state !== 1) {
-                p.mute?.();
-                p.playVideo?.();
-                setTimeout(() => { try { p.unMute?.(); } catch(_) {} }, 350);
-              }
-            } catch(_) {}
-          }, 250);
+          p.unMute?.(); p.setVolume?.(100); p.playVideo?.();
+          setTimeout(() => { try { const s = p.getPlayerState?.(); if (s !== 1) { p.mute?.(); p.playVideo?.(); setTimeout(() => { try { p.unMute?.(); } catch(_) {} }, 350); } } catch(_) {} }, 250);
         } catch(_) {}
       }, []);
 
@@ -208,33 +157,26 @@
         if (!playerReadyRef.current || !playerRef.current || !activePlaylistId) return;
         const p = playerRef.current;
         try {
-          if (!playlistLoadedRef.current) {
-            p.loadPlaylist({ listType: 'playlist', list: activePlaylistId, index: 0 });
-            playlistLoadedRef.current = true;
-          }
-          if (mode === 'Single') {
-            tryPlayWithUnmute();
-          } else if (mode === 'Next+Shuffle') {
-            p.setShuffle?.(true);
-            p.nextVideo?.();
-            tryPlayWithUnmute();
-          } else {
-            p.setShuffle?.(false);
-            p.nextVideo?.();
-            tryPlayWithUnmute();
-          }
-          // Schedule stop for music only (stopwatch keeps running)
-          clearMusicTimer();
-          if (typeof musicLenMs === 'number' && musicLenMs > 0) {
-            musicStopTimeoutRef.current = setTimeout(() => {
-              try { p.pauseVideo?.(); } catch (_) {}
-              musicStopTimeoutRef.current = null;
-            }, musicLenMs);
-          }
+          if (!playlistLoadedRef.current) { p.loadPlaylist({ listType: 'playlist', list: activePlaylistId, index: 0 }); playlistLoadedRef.current = true; }
+          if (mode === 'Single') { tryPlayWithUnmute(); }
+          else if (mode === 'Next+Shuffle') { p.setShuffle?.(true); p.nextVideo?.(); tryPlayWithUnmute(); }
+          else { p.setShuffle?.(false); p.nextVideo?.(); tryPlayWithUnmute(); }
+          rescheduleMusicStop();
         } catch (e) { console.warn('YT play error:', e); }
-      }, [activePlaylistId, mode, musicLenMs, clearMusicTimer, tryPlayWithUnmute]);
+      }, [activePlaylistId, mode, tryPlayWithUnmute, rescheduleMusicStop]);
 
-      // Stopwatch loop
+      const playPrev = useCallback((e) => {
+        e?.stopPropagation?.(); if (!playerReadyRef.current || !playerRef.current || !activePlaylistId) return;
+        const p = playerRef.current;
+        try { if (!playlistLoadedRef.current) { p.loadPlaylist({ listType: 'playlist', list: activePlaylistId, index: 0 }); playlistLoadedRef.current = true; } p.previousVideo?.(); tryPlayWithUnmute(); rescheduleMusicStop(); } catch(_) {}
+      }, [activePlaylistId, tryPlayWithUnmute, rescheduleMusicStop]);
+
+      const playNext = useCallback((e) => {
+        e?.stopPropagation?.(); if (!playerReadyRef.current || !playerRef.current || !activePlaylistId) return;
+        const p = playerRef.current;
+        try { if (!playlistLoadedRef.current) { p.loadPlaylist({ listType: 'playlist', list: activePlaylistId, index: 0 }); playlistLoadedRef.current = true; } p.nextVideo?.(); tryPlayWithUnmute(); rescheduleMusicStop(); } catch(_) {}
+      }, [activePlaylistId, tryPlayWithUnmute, rescheduleMusicStop]);
+
       const tick = useCallback((now) => {
         if (!running || paused) return;
         if (startTimeRef.current == null) startTimeRef.current = now - elapsed;
@@ -243,60 +185,28 @@
         rafRef.current = requestAnimationFrame(tick);
       }, [elapsed, running, paused]);
 
-      useEffect(() => {
-        if (running && !paused) {
-          rafRef.current = requestAnimationFrame(tick);
-          return () => cancelAnimationFrame(rafRef.current);
-        }
-        return () => {};
-      }, [running, paused, tick]);
+      useEffect(() => { if (running && !paused) { rafRef.current = requestAnimationFrame(tick); return () => cancelAnimationFrame(rafRef.current); } return () => {}; }, [running, paused, tick]);
 
-      // Reveal controls: auto-hide after 13s unless pinned
       const revealControls = useCallback((ms=13000) => {
         setShowControls(true);
         if (controlsTimerRef.current) { clearTimeout(controlsTimerRef.current); controlsTimerRef.current = null; }
-        if (!pinned) {
-          controlsTimerRef.current = setTimeout(() => setShowControls(false), ms);
-        }
+        if (!pinned) controlsTimerRef.current = setTimeout(() => setShowControls(false), ms);
       }, [pinned]);
 
-      // Start / Reset logic
+      const hideControls = useCallback(() => { if (controlsTimerRef.current) { clearTimeout(controlsTimerRef.current); controlsTimerRef.current = null; } setShowControls(false); }, []);
+
       const startStopwatchAndMusic = useCallback(() => {
-        setRunning(true);
-        setPaused(false);
-        startTimeRef.current = performance.now();
-        setElapsed(0);
-        ensureLoadedAndPlay();
-        if (!pinned) setShowControls(false);
+        setRunning(true); setPaused(false); startTimeRef.current = performance.now(); setElapsed(0); ensureLoadedAndPlay(); if (!pinned) setShowControls(false);
       }, [ensureLoadedAndPlay, pinned]);
 
-      const resetStopwatchAndMusic = useCallback(() => {
-        if (!running) { startStopwatchAndMusic(); return; }
-        startTimeRef.current = performance.now();
-        setElapsed(0);
-        ensureLoadedAndPlay();
-      }, [running, startStopwatchAndMusic, ensureLoadedAndPlay]);
+      const resetStopwatchAndMusic = useCallback(() => { if (!running) { startStopwatchAndMusic(); return; } startTimeRef.current = performance.now(); setElapsed(0); ensureLoadedAndPlay(); }, [running, startStopwatchAndMusic, ensureLoadedAndPlay]);
 
-      // Global tap anywhere: start or reset
       const handleGlobalTap = useCallback(() => { resetStopwatchAndMusic(); }, [resetStopwatchAndMusic]);
 
-      // Pause/Resume stopwatch only
-      const handlePauseToggle = useCallback((e) => {
-        e?.stopPropagation?.();
-        if (!running) return;
-        setPaused((p) => {
-          const next = !p;
-          if (!next) startTimeRef.current = performance.now() - elapsed;
-          return next;
-        });
-      }, [running, elapsed]);
+      const handlePauseToggle = useCallback((e) => { e?.stopPropagation?.(); if (!running) return; setPaused((p) => { const next = !p; if (!next) startTimeRef.current = performance.now() - elapsed; return next; }); }, [running, elapsed]);
 
-      const selectMusicPreset = useCallback((preset, e) => {
-        e?.stopPropagation?.();
-        setMusicLenMs(preset.ms);
-      }, []);
+      const selectMusicPreset = useCallback((preset, e) => { e?.stopPropagation?.(); setMusicLenMs(preset.ms); }, []);
 
-      // Keyboard shortcuts: space = reset/start, p = pause, s = show controls, s then e = open settings, f = fullscreen
       useEffect(() => {
         const onKey = (e) => {
           const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
@@ -304,208 +214,109 @@
           const key = (e.key || '').toLowerCase();
           if (key === ' ') { e.preventDefault(); resetStopwatchAndMusic(); }
           else if (key === 'p') { e.preventDefault(); handlePauseToggle(); }
-          else if (key === 's') { e.preventDefault(); revealControls(13000); lastSAtRef.current = Date.now(); }
+          else if (key === 's') { e.preventDefault(); if (showControls) hideControls(); else revealControls(13000); lastSAtRef.current = Date.now(); }
           else if (key === 'e') { if (Date.now() - lastSAtRef.current < 800) { e.preventDefault(); setSettingsOpen(true); revealControls(13000); lastSAtRef.current = 0; } }
           else if (key === 'f') { e.preventDefault(); toggleFullscreen(); }
+          else if (key === 'arrowright') { e.preventDefault(); playNext(); }
+          else if (key === 'arrowleft') { e.preventDefault(); playPrev(); }
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-      }, [resetStopwatchAndMusic, handlePauseToggle, revealControls]);
+      }, [resetStopwatchAndMusic, handlePauseToggle, revealControls, hideControls, playPrev, playNext, showControls]);
 
-      // Fullscreen
       const [isFs, setIsFs] = useState(false);
-      const toggleFullscreen = useCallback(() => {
-        const el = document.documentElement;
-        if (!document.fullscreenElement) {
-          el.requestFullscreen?.();
-          setIsFs(true);
-        } else {
-          document.exitFullscreen?.();
-          setIsFs(false);
-        }
-      }, []);
-      useEffect(() => {
-        const onFsChange = () => setIsFs(!!document.fullscreenElement);
-        document.addEventListener('fullscreenchange', onFsChange);
-        return () => document.removeEventListener('fullscreenchange', onFsChange);
-      }, []);
+      const toggleFullscreen = useCallback(() => { const el = document.documentElement; if (!document.fullscreenElement) { el.requestFullscreen?.(); setIsFs(true); } else { document.exitFullscreen?.(); setIsFs(false); } }, []);
+      useEffect(() => { const onFsChange = () => setIsFs(!!document.fullscreenElement); document.addEventListener('fullscreenchange', onFsChange); return () => document.removeEventListener('fullscreenchange', onFsChange); }, []);
 
-      // Export / Import JSON (Settings)
       const exportSettings = useCallback((e) => {
         e?.stopPropagation?.();
-        const data = { version: 'v11', playlistSlots, activeIndex, musicLenMs, mode, showSeconds };
+        const data = { version: 'v12', playlistSlots, activeIndex, musicLenMs, mode, secondsMode };
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'stopwatch-settings.json';
-        a.click();
-        URL.revokeObjectURL(a.href);
-      }, [playlistSlots, activeIndex, musicLenMs, mode, showSeconds]);
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'stopwatch-settings.json'; a.click(); URL.revokeObjectURL(a.href);
+      }, [playlistSlots, activeIndex, musicLenMs, mode, secondsMode]);
 
-      const importSettingsFromFile = useCallback((e) => {
-        e?.stopPropagation?.();
-        fileInputRef.current?.click();
-      }, []);
+      const importSettingsFromFile = useCallback((e) => { e?.stopPropagation?.(); fileInputRef.current?.click(); }, []);
 
       const onImportFileChange = useCallback((e) => {
-        const file = e.target.files && e.target.files[0];
-        if (!file) return;
+        const file = e.target.files && e.target.files[0]; if (!file) return;
         const reader = new FileReader();
         reader.onload = () => {
           try {
             const p = JSON.parse(reader.result);
-            if (Array.isArray(p.playlistSlots)) {
-              const merged = [...DEFAULT_PLAYLIST_SLOTS].map((_, i) => p.playlistSlots[i] || '');
-              setPlaylistSlots(merged);
-            }
+            if (Array.isArray(p.playlistSlots)) setPlaylistSlots([...DEFAULT_PLAYLIST_SLOTS].map((_, i) => p.playlistSlots[i] || ''));
             if (typeof p.activeIndex === 'number') setActiveIndex(clamp(p.activeIndex, 0, 19));
             if (typeof p.musicLenMs === 'number' || p.musicLenMs === null) setMusicLenMs(p.musicLenMs);
-            if (typeof p.showSeconds === 'boolean') setShowSeconds(p.showSeconds);
+            if (Object.values(SEC_MODES).includes(p.secondsMode)) setSecondsMode(p.secondsMode);
             if (MODES.includes(p.mode)) setMode(p.mode);
-          } catch (err) {
-            alert('Invalid settings file.');
-          } finally {
-            e.target.value = '';
-          }
+          } catch { alert('Invalid settings file.'); } finally { e.target.value = ''; }
         };
         reader.readAsText(file);
       }, []);
 
       return (
         <div className="min-h-screen w-full bg-blue-950 text-blue-200 relative select-none" onClick={handleGlobalTap}>
-          {/* Hidden file input for import */}
           <input type="file" ref={fileInputRef} accept="application/json" className="hidden" onChange={onImportFileChange} />
 
-          {/* Top-left clock â€“ bigger, same color as digits, no seconds */}
-          <div className="absolute top-3 left-4 font-extrabold" style={{ color: '#93C5FD' }}>
-            <div className="text-2xl md:text-4xl leading-none">{clock}</div>
-          </div>
-
-          {/* Bottom 10% reveal area */}
-          <div className="fixed bottom-0 left-0 w-full" style={{ height: '10vh' }} onClick={(e) => { e.stopPropagation(); revealControls(13000); }} />
-
-          {/* Floating ball to show controls */}
-          <button
-            onClick={(e) => { e.stopPropagation(); revealControls(13000); }}
-            className="fixed bottom-6 left-1/2 -translate-x-1/2 w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-500 shadow-lg active:scale-95 transition"
-            title="Show controls"
-          />
-
-          {/* Center stopwatch moved 25% further down */}
-          <div className="grid place-items-center" style={{ marginTop: '25vh' }} onClick={(e) => { e.stopPropagation(); resetStopwatchAndMusic(); }}>
-            <div className="text-[20vw] md:text-[12rem] leading-none font-extrabold drop-shadow" style={{ color: '#93C5FD', textShadow: '0 0 12px rgba(147,197,253,0.15)' }} aria-live="polite">
-              {formatMMSS(elapsed, showSeconds)}
-            </div>
-            <div className="mt-3 text-blue-300">
-              Tap anywhere to start/reset â€¢ Tap digits to reset â€¢ use bottom ball to show controls
-            </div>
-          </div>
-
-          {/* Controls (hidden after start; auto-hide 13s unless pinned) */}
-          <div className={(running && !showControls ? 'opacity-0 pointer-events-none ' : 'opacity-100 ') + 'transition-opacity duration-200'} onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-6 py-4">
-              <h1 className="text-xl md:text-2xl font-semibold tracking-tight">V11 Stopwatch</h1>
-              <div className="flex gap-2 items-center">
-                {/* Mode toggle (desktop) */}
-                <div className="hidden md:flex items-center rounded-xl border border-blue-800 overflow-hidden">
-                  {MODES.map((m, idx) => (
-                    <button
-                      key={m}
-                      onClick={(e) => { e.stopPropagation(); setMode(m); }}
-                      className={
-                        "px-3 py-2 text-sm " +
-                        (idx > 0 ? "border-l border-blue-800 " : "") +
-                        (m === mode ? "bg-blue-100 text-blue-900" : "bg-blue-900 hover:bg-blue-800")
-                      }
-                    >
-                      {m}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Toggle seconds */}
-                <button onClick={(e) => { e.stopPropagation(); setShowSeconds(s => !s); }} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800 active:scale-95 transition">
-                  {showSeconds ? 'Hide seconds' : 'Show seconds'}
-                </button>
-
-                {/* Music length presets */}
-                <div className="hidden md:flex flex-wrap gap-2 ml-2">
-                  {MUSIC_PRESETS.map((p) => (
-                    <button
-                      key={p.label}
-                      onClick={(e) => selectMusicPreset(p, e)}
-                      className={
-                        "px-3 py-2 rounded-xl border transition " +
-                        (musicLenMs === p.ms ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")
-                      }
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Settings */}
-                <button onClick={(e) => { e.stopPropagation(); setSettingsOpen(true); revealControls(13000); }} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800 active:scale-95 transition">Settings</button>
-
-                {/* Start / Pause (stopwatch only) */}
-                {!running ? (
-                  <button onClick={(e) => { e.stopPropagation(); startStopwatchAndMusic(); }} className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 transition">Start</button>
-                ) : (
-                  <button onClick={handlePauseToggle} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800 active:scale-95 transition">{paused ? "Resume" : "Pause"}</button>
-                )}
-
-                {/* Kill switch for music only */}
-                <button onClick={stopMusicOnly} className="px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500 active:scale-95 transition" title="Stop music â€“ stopwatch keeps running">Stop Music</button>
-
-                {/* Pin controls */}
-                <button onClick={(e) => { e.stopPropagation(); setPinned(v => !v); if (!pinned) setShowControls(true); }} className={"px-3 py-2 rounded-xl border " + (pinned ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>
-                  {pinned ? "Unpin controls" : "Pin controls"}
-                </button>
-
-                {/* Fullscreen */}
+          {/* Top cluster */}
+          <div className="absolute top-3 left-4 right-4 px-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="mr-3 font-extrabold" style={{ color: '#93C5FD' }}>
+                <span className="text-2xl md:text-4xl leading-none">{clock}</span>
+              </div>
+              <div className="flex items-center rounded-xl border border-blue-800 overflow-hidden">
+                {MODES.map((m, idx) => (
+                  <button key={m} onClick={(e) => { e.stopPropagation(); setMode(m); }} className={"px-3 py-2 text-sm " + (idx>0 ? "border-l border-blue-800 " : "") + (m===mode ? "bg-blue-100 text-blue-900" : "bg-blue-900 hover:bg-blue-800")}>{m}</button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={playPrev} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800">Prev</button>
+                <button onClick={playNext} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800">Next</button>
+              </div>
+              <div className="flex-1" />
+              <div className="hidden lg:flex flex-wrap gap-2">
+                {MUSIC_PRESETS.map((p) => (
+                  <button key={p.label} onClick={(e) => selectMusicPreset(p, e)} className={"px-3 py-2 rounded-xl border transition " + (musicLenMs===p.ms ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>{p.label}</button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={(e) => { e.stopPropagation(); setSettingsOpen(true); revealControls(13000); }} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800">Settings</button>
+                <button onClick={handlePauseToggle} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800">{paused ? "Resume" : "Pause"}</button>
+                <button onClick={stopMusicOnly} className="px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500">Stop Music</button>
                 <FsButton />
               </div>
             </div>
+          </div>
 
-            {/* Mobile controls */}
-            <div className="px-6 md:hidden space-y-2">
-              <div className="grid grid-cols-3 gap-2">
-                {MODES.map((m) => (
-                  <button
-                    key={m}
-                    onClick={(e) => { e.stopPropagation(); setMode(m); }}
-                    className={"px-3 py-2 rounded-xl text-sm " + (m === mode ? "bg-blue-100 text-blue-900" : "bg-blue-900 hover:bg-blue-800")}
-                  >
-                    {m}
-                  </button>
-                ))}
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                {MUSIC_PRESETS.map((p) => (
-                  <button
-                    key={p.label}
-                    onClick={(e) => selectMusicPreset(p, e)}
-                    className={"px-3 py-2 rounded-xl text-sm " + (musicLenMs === p.ms ? "bg-blue-100 text-blue-900" : "bg-blue-900 hover:bg-blue-800")}
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-              <button onClick={(e) => { e.stopPropagation(); setShowSeconds(s => !s); }} className="w-full px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800">
-                {showSeconds ? 'Hide seconds' : 'Show seconds'}
-              </button>
+          {/* Bottom reveal zone */}
+          <div className="fixed bottom-0 left-0 w-full" style={{ height: '10vh' }} onClick={(e) => { e.stopPropagation(); if (showControls) hideControls(); else revealControls(13000); }} />
+
+          {/* Floating ball toggle */}
+          <button onClick={(e) => { e.stopPropagation(); if (showControls) { setPinned(false); hideControls(); } else { revealControls(13000); } }} className="fixed bottom-6 left-1/2 -translate-x-1/2 w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-500 shadow-lg active:scale-95 transition" title="Show/Hide controls"></button>
+
+          {/* Stopwatch area */}
+          <div className="grid place-items-center" style={{ marginTop: '25vh' }} onClick={(e) => { e.stopPropagation(); resetStopwatchAndMusic(); }}>
+            <div className="text-[20vw] md:text-[12rem] leading-none font-extrabold drop-shadow" style={{ color: '#93C5FD', textShadow: '0 0 12px rgba(147,197,253,0.15)' }} aria-live="polite">
+              {formatDisplay(elapsed, secondsMode)}
             </div>
           </div>
 
-          {/* Active slot */}
-          <div className="mt-6 text-center text-sm text-blue-300">
-            Active playlist slot: <span className="text-blue-100 font-medium">{activeIndex + 1}</span>
+          {/* Below stopwatch controls */}
+          <div className="mt-4 flex flex-col items-center gap-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <button onClick={() => { setPinned((v) => !v); if (!pinned) revealControls(13000); }} className={"px-3 py-2 rounded-xl border " + (pinned ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>{pinned ? "Unpin controls" : "Pin controls"}</button>
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <button onClick={() => setSecondsMode(SEC_MODES.ON)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.ON ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>Show seconds</button>
+              <button onClick={() => setSecondsMode(SEC_MODES.OFF)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.OFF ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>Hide seconds</button>
+              <button onClick={() => setSecondsMode(SEC_MODES.FIRST_MIN)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.FIRST_MIN ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>First minute</button>
+              <button onClick={() => setSecondsMode(SEC_MODES.EVERY_10S)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.EVERY_10S ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>Every 10s</button>
+            </div>
           </div>
 
-          {/* V11 badge */}
-          <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V11</div>
+          <div className="mt-6 text-center text-sm text-blue-300">Active playlist slot: <span className="text-blue-100 font-medium">{activeIndex + 1}</span></div>
 
-          {/* SETTINGS MODAL (fixed) */}
+          <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V12</div>
+
           {settingsOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={(e) => { e.stopPropagation(); setSettingsOpen(false); }}>
               <div className="w-full max-w-3xl rounded-2xl bg-blue-950 border border-blue-900" onClick={(e) => e.stopPropagation()}>
@@ -517,32 +328,16 @@
                     <button onClick={(e) => { e.stopPropagation(); setSettingsOpen(false); }} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800">Close</button>
                   </div>
                 </div>
-
                 <div className="max-h-[60vh] overflow-y-auto p-5 space-y-4">
-                  <p className="text-sm text-blue-300">Add up to 20 YouTube playlists. Paste a playlist URL or just the playlist ID. Select the active slot.</p>
+                  <p className="text-sm text-blue-300">Add up to 20 YouTube playlists. Paste a playlist URL or ID. Select the active slot.</p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {playlistSlots.map((val, i) => (
                       <div key={i} className="rounded-xl border border-blue-900 p-3">
                         <label className="text-xs text-blue-300">Slot {i + 1}</label>
-                        <input
-                          type="text"
-                          placeholder="Playlist URL or ID"
-                          value={val}
-                          onChange={(e) => {
-                            const next = [...playlistSlots];
-                            next[i] = e.target.value;
-                            setPlaylistSlots(next);
-                          }}
-                          className="mt-1 w-full rounded-lg bg-blue-900 border border-blue-800 px-3 py-2 outline-none focus:border-blue-400"
-                        />
+                        <input type="text" placeholder="Playlist URL or ID" value={val} onChange={(e) => { const next = [...playlistSlots]; next[i] = e.target.value; setPlaylistSlots(next); }} className="mt-1 w-full rounded-lg bg-blue-900 border border-blue-800 px-3 py-2 outline-none focus:border-blue-400" />
                         <div className="mt-2 flex items-center justify-between text-xs">
                           <div className="text-blue-400 truncate">ID: {extractPlaylistId(val) || 'â€”'}</div>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setActiveIndex(i); }}
-                            className={'ml-2 px-2 py-1 rounded-lg border text-xs transition ' + (activeIndex === i ? 'bg-blue-100 text-blue-900 border-blue-100' : 'bg-blue-900 border-blue-800 hover:bg-blue-800')}
-                          >
-                            {activeIndex === i ? 'Active' : 'Make Active'}
-                          </button>
+                          <button onClick={(e) => { e.stopPropagation(); setActiveIndex(i); }} className={'ml-2 px-2 py-1 rounded-lg border text-xs transition ' + (activeIndex === i ? 'bg-blue-100 text-blue-900 border-blue-100' : 'bg-blue-900 border-blue-800 hover:bg-blue-800')}>{activeIndex === i ? 'Active' : 'Make Active'}</button>
                         </div>
                       </div>
                     ))}
@@ -554,20 +349,11 @@
         </div>
       );
 
-      // Local component for fullscreen button to avoid prop threading
       function FsButton() {
         const [isFs, setIsFs] = React.useState(!!document.fullscreenElement);
-        React.useEffect(() => {
-          const onFsChange = () => setIsFs(!!document.fullscreenElement);
-          document.addEventListener('fullscreenchange', onFsChange);
-          return () => document.removeEventListener('fullscreenchange', onFsChange);
-        }, []);
-        const toggle = (e) => {
-          e.stopPropagation();
-          if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
-          else document.exitFullscreen?.();
-        };
-        return <button onClick={toggle} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800 active:scale-95 transition">{isFs ? 'Exit Fullscreen' : 'Fullscreen'}</button>;
+        React.useEffect(() => { const onFsChange = () => setIsFs(!!document.fullscreenElement); document.addEventListener('fullscreenchange', onFsChange); return () => document.removeEventListener('fullscreenchange', onFsChange); }, []);
+        const toggle = (e) => { e.stopPropagation(); if (!document.fullscreenElement) document.documentElement.requestFullscreen?.(); else document.exitFullscreen?.(); };
+        return <button onClick={toggle} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800">{isFs ? 'Exit' : 'Fullscreen'}</button>;
       }
     }
 
