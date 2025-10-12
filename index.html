@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>V7 Stopwatch â€“ YouTube Playlist Timer</title>
+  <title>V11 Stopwatch â€“ YouTube Playlist Timer</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     html, body, #root { height: 100%; }
@@ -27,33 +27,31 @@
 
     // Music length presets (do NOT affect stopwatch)
     const MUSIC_PRESETS = [
+      { label: '1s', ms: 1000 },
+      { label: '2s', ms: 2000 },
       { label: '3s', ms: 3000 },
       { label: '5s', ms: 5000 },
       { label: '10s', ms: 10000 },
       { label: '20s', ms: 20000 },
       { label: '30s', ms: 30000 },
+      { label: '1:30', ms: 90000 },
+      { label: '2:00', ms: 120000 },
       { label: '1 min', ms: 60000 },
       { label: 'Full song', ms: null },
     ];
     const MODES = ['Single', 'Next', 'Next+Shuffle'];
     const DEFAULT_PLAYLIST_SLOTS = Array.from({ length: 20 }, () => '');
-    const LS_KEY = 'v7_stopwatch_settings';
+    const LS_KEY = 'v11_stopwatch_settings'; // new key
+    const LEGACY_KEYS = ['v10_stopwatch_settings', 'v9_stopwatch_settings', 'v8_stopwatch_settings'];
 
     const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
     const pad2 = (n) => String(n).padStart(2, '0');
-    const nowClock = () => {
-      const d = new Date();
-      return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
-    };
+    const clockHHMM = () => { const d = new Date(); return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); };
     const extractPlaylistId = (input) => {
       if (!input) return '';
       const s = input.trim();
       if (/^[A-Za-z0-9_-]{10,}$/.test(s)) return s;
-      try {
-        const url = new URL(s);
-        const list = url.searchParams.get('list');
-        if (list) return list;
-      } catch (_) {}
+      try { const url = new URL(s); const list = url.searchParams.get('list'); if (list) return list; } catch (_) {}
       return s;
     };
     const formatMMSS = (ms, showSeconds=true) => {
@@ -70,12 +68,13 @@
       const [paused, setPaused] = useState(false);
       const [showSeconds, setShowSeconds] = useState(true);
 
-      // Controls visibility
+      // Controls visibility & pin
       const [showControls, setShowControls] = useState(true);
+      const [pinned, setPinned] = useState(false);
       const controlsTimerRef = useRef(null);
 
       // Music
-      const [musicLenMs, setMusicLenMs] = useState(MUSIC_PRESETS[2].ms);
+      const [musicLenMs, setMusicLenMs] = useState(MUSIC_PRESETS[2].ms); // default 3s
       const [mode, setMode] = useState(MODES[0]);
       const [playlistSlots, setPlaylistSlots] = useState(DEFAULT_PLAYLIST_SLOTS);
       const [activeIndex, setActiveIndex] = useState(0);
@@ -91,14 +90,29 @@
       const rafRef = useRef(null);
       const startTimeRef = useRef(null);
 
-      // Clock
-      const [clock, setClock] = useState(nowClock());
-      useEffect(() => { const id = setInterval(() => setClock(nowClock()), 1000); return () => clearInterval(id); }, []);
+      // Clock (HH:MM, bigger, same color as digits)
+      const [clock, setClock] = useState(clockHHMM());
+      useEffect(() => {
+        const id = setInterval(() => setClock(clockHHMM()), 1000);
+        return () => clearInterval(id);
+      }, []);
 
-      // Load settings
+      // Keyboard sequence for 's' then 'e'
+      const lastSAtRef = useRef(0);
+
+      // JSON import
+      const fileInputRef = useRef(null);
+
+      // Load settings; migrate from legacy if needed
       useEffect(() => {
         try {
-          const raw = localStorage.getItem(LS_KEY);
+          let raw = localStorage.getItem(LS_KEY);
+          if (!raw) {
+            for (const k of LEGACY_KEYS) {
+              raw = localStorage.getItem(k);
+              if (raw) break;
+            }
+          }
           if (raw) {
             const p = JSON.parse(raw);
             if (Array.isArray(p.playlistSlots)) {
@@ -141,7 +155,10 @@
           playerRef.current = new window.YT.Player('yt-player', {
             height: '1',
             width: '1',
-            playerVars: { autoplay: 0, controls: 0, modestbranding: 1, rel: 0, playsinline: 1, enablejsapi: 1 },
+            playerVars: {
+              autoplay: 0, controls: 0, modestbranding: 1, rel: 0, playsinline: 1, enablejsapi: 1,
+              origin: window.location.origin
+            },
             events: { onReady, onStateChange },
           });
         }
@@ -165,36 +182,57 @@
         try { playerRef.current?.stopVideo(); } catch (_) {}
       }, [clearMusicTimer]);
 
+      // Hardened playback for Chrome: try unmuted; if blocked, start muted then unmute shortly after
+      const tryPlayWithUnmute = useCallback(() => {
+        const p = playerRef.current;
+        if (!p) return;
+        try {
+          p.unMute?.();
+          p.setVolume?.(100);
+          p.playVideo?.();
+          // Double-check after a short delay; if not playing, fallback to mute-start
+          setTimeout(() => {
+            try {
+              const state = p.getPlayerState?.(); // 1 = playing
+              if (state !== 1) {
+                p.mute?.();
+                p.playVideo?.();
+                setTimeout(() => { try { p.unMute?.(); } catch(_) {} }, 350);
+              }
+            } catch(_) {}
+          }, 250);
+        } catch(_) {}
+      }, []);
+
       const ensureLoadedAndPlay = useCallback(() => {
         if (!playerReadyRef.current || !playerRef.current || !activePlaylistId) return;
+        const p = playerRef.current;
         try {
           if (!playlistLoadedRef.current) {
-            playerRef.current.loadPlaylist({ listType: 'playlist', list: activePlaylistId, index: 0 });
+            p.loadPlaylist({ listType: 'playlist', list: activePlaylistId, index: 0 });
             playlistLoadedRef.current = true;
           }
-          playerRef.current.unMute && playerRef.current.unMute();
-          playerRef.current.setVolume && playerRef.current.setVolume(100);
           if (mode === 'Single') {
-            playerRef.current.playVideo();
+            tryPlayWithUnmute();
           } else if (mode === 'Next+Shuffle') {
-            playerRef.current.setShuffle(true);
-            playerRef.current.nextVideo();
-            playerRef.current.playVideo();
+            p.setShuffle?.(true);
+            p.nextVideo?.();
+            tryPlayWithUnmute();
           } else {
-            playerRef.current.setShuffle(false);
-            playerRef.current.nextVideo();
-            playerRef.current.playVideo();
+            p.setShuffle?.(false);
+            p.nextVideo?.();
+            tryPlayWithUnmute();
           }
           // Schedule stop for music only (stopwatch keeps running)
           clearMusicTimer();
           if (typeof musicLenMs === 'number' && musicLenMs > 0) {
             musicStopTimeoutRef.current = setTimeout(() => {
-              try { playerRef.current?.pauseVideo(); } catch (_) {}
+              try { p.pauseVideo?.(); } catch (_) {}
               musicStopTimeoutRef.current = null;
             }, musicLenMs);
           }
         } catch (e) { console.warn('YT play error:', e); }
-      }, [activePlaylistId, mode, musicLenMs, clearMusicTimer]);
+      }, [activePlaylistId, mode, musicLenMs, clearMusicTimer, tryPlayWithUnmute]);
 
       // Stopwatch loop
       const tick = useCallback((now) => {
@@ -213,12 +251,14 @@
         return () => {};
       }, [running, paused, tick]);
 
-      // Reveal controls bottom 10%
-      const revealControls = useCallback((ms=5000) => {
+      // Reveal controls: auto-hide after 13s unless pinned
+      const revealControls = useCallback((ms=13000) => {
         setShowControls(true);
-        if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
-        controlsTimerRef.current = setTimeout(() => setShowControls(false), ms);
-      }, []);
+        if (controlsTimerRef.current) { clearTimeout(controlsTimerRef.current); controlsTimerRef.current = null; }
+        if (!pinned) {
+          controlsTimerRef.current = setTimeout(() => setShowControls(false), ms);
+        }
+      }, [pinned]);
 
       // Start / Reset logic
       const startStopwatchAndMusic = useCallback(() => {
@@ -227,23 +267,18 @@
         startTimeRef.current = performance.now();
         setElapsed(0);
         ensureLoadedAndPlay();
-        setShowControls(false);
-      }, [ensureLoadedAndPlay]);
+        if (!pinned) setShowControls(false);
+      }, [ensureLoadedAndPlay, pinned]);
 
       const resetStopwatchAndMusic = useCallback(() => {
-        if (!running) return;
+        if (!running) { startStopwatchAndMusic(); return; }
         startTimeRef.current = performance.now();
         setElapsed(0);
         ensureLoadedAndPlay();
-      }, [running, ensureLoadedAndPlay]);
+      }, [running, startStopwatchAndMusic, ensureLoadedAndPlay]);
 
-      // Global tap anywhere: if not running -> start; else -> reset
-      const handleGlobalTap = useCallback((e) => {
-        // ignore if tap comes from controls or reveal zone
-        // (we'll stopPropagation in those elements)
-        if (!running) startStopwatchAndMusic();
-        else resetStopwatchAndMusic();
-      }, [running, startStopwatchAndMusic, resetStopwatchAndMusic]);
+      // Global tap anywhere: start or reset
+      const handleGlobalTap = useCallback(() => { resetStopwatchAndMusic(); }, [resetStopwatchAndMusic]);
 
       // Pause/Resume stopwatch only
       const handlePauseToggle = useCallback((e) => {
@@ -261,29 +296,115 @@
         setMusicLenMs(preset.ms);
       }, []);
 
+      // Keyboard shortcuts: space = reset/start, p = pause, s = show controls, s then e = open settings, f = fullscreen
+      useEffect(() => {
+        const onKey = (e) => {
+          const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
+          if (tag === 'input' || tag === 'textarea' || e.isContentEditable) return;
+          const key = (e.key || '').toLowerCase();
+          if (key === ' ') { e.preventDefault(); resetStopwatchAndMusic(); }
+          else if (key === 'p') { e.preventDefault(); handlePauseToggle(); }
+          else if (key === 's') { e.preventDefault(); revealControls(13000); lastSAtRef.current = Date.now(); }
+          else if (key === 'e') { if (Date.now() - lastSAtRef.current < 800) { e.preventDefault(); setSettingsOpen(true); revealControls(13000); lastSAtRef.current = 0; } }
+          else if (key === 'f') { e.preventDefault(); toggleFullscreen(); }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+      }, [resetStopwatchAndMusic, handlePauseToggle, revealControls]);
+
+      // Fullscreen
+      const [isFs, setIsFs] = useState(false);
+      const toggleFullscreen = useCallback(() => {
+        const el = document.documentElement;
+        if (!document.fullscreenElement) {
+          el.requestFullscreen?.();
+          setIsFs(true);
+        } else {
+          document.exitFullscreen?.();
+          setIsFs(false);
+        }
+      }, []);
+      useEffect(() => {
+        const onFsChange = () => setIsFs(!!document.fullscreenElement);
+        document.addEventListener('fullscreenchange', onFsChange);
+        return () => document.removeEventListener('fullscreenchange', onFsChange);
+      }, []);
+
+      // Export / Import JSON (Settings)
+      const exportSettings = useCallback((e) => {
+        e?.stopPropagation?.();
+        const data = { version: 'v11', playlistSlots, activeIndex, musicLenMs, mode, showSeconds };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'stopwatch-settings.json';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }, [playlistSlots, activeIndex, musicLenMs, mode, showSeconds]);
+
+      const importSettingsFromFile = useCallback((e) => {
+        e?.stopPropagation?.();
+        fileInputRef.current?.click();
+      }, []);
+
+      const onImportFileChange = useCallback((e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const p = JSON.parse(reader.result);
+            if (Array.isArray(p.playlistSlots)) {
+              const merged = [...DEFAULT_PLAYLIST_SLOTS].map((_, i) => p.playlistSlots[i] || '');
+              setPlaylistSlots(merged);
+            }
+            if (typeof p.activeIndex === 'number') setActiveIndex(clamp(p.activeIndex, 0, 19));
+            if (typeof p.musicLenMs === 'number' || p.musicLenMs === null) setMusicLenMs(p.musicLenMs);
+            if (typeof p.showSeconds === 'boolean') setShowSeconds(p.showSeconds);
+            if (MODES.includes(p.mode)) setMode(p.mode);
+          } catch (err) {
+            alert('Invalid settings file.');
+          } finally {
+            e.target.value = '';
+          }
+        };
+        reader.readAsText(file);
+      }, []);
+
       return (
         <div className="min-h-screen w-full bg-blue-950 text-blue-200 relative select-none" onClick={handleGlobalTap}>
-          {/* Top-left clock */}
-          <div className="absolute top-3 left-4 text-blue-400 font-semibold">â° {clock}</div>
+          {/* Hidden file input for import */}
+          <input type="file" ref={fileInputRef} accept="application/json" className="hidden" onChange={onImportFileChange} />
+
+          {/* Top-left clock â€“ bigger, same color as digits, no seconds */}
+          <div className="absolute top-3 left-4 font-extrabold" style={{ color: '#93C5FD' }}>
+            <div className="text-2xl md:text-4xl leading-none">{clock}</div>
+          </div>
 
           {/* Bottom 10% reveal area */}
-          <div className="fixed bottom-0 left-0 w-full" style={{ height: '10vh' }} onClick={(e) => { e.stopPropagation(); revealControls(5000); }} />
+          <div className="fixed bottom-0 left-0 w-full" style={{ height: '10vh' }} onClick={(e) => { e.stopPropagation(); revealControls(13000); }} />
 
-          {/* Center stopwatch (clicking numbers resets) */}
-          <div className="grid place-items-center py-10 md:py-16" onClick={(e) => { e.stopPropagation(); resetStopwatchAndMusic(); }}>
-            <div className="text-[20vw] md:text-[12rem] leading-none font-bold drop-shadow" style={{ color: '#BFDBFE' }} aria-live="polite">
+          {/* Floating ball to show controls */}
+          <button
+            onClick={(e) => { e.stopPropagation(); revealControls(13000); }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-500 shadow-lg active:scale-95 transition"
+            title="Show controls"
+          />
+
+          {/* Center stopwatch moved 25% further down */}
+          <div className="grid place-items-center" style={{ marginTop: '25vh' }} onClick={(e) => { e.stopPropagation(); resetStopwatchAndMusic(); }}>
+            <div className="text-[20vw] md:text-[12rem] leading-none font-extrabold drop-shadow" style={{ color: '#93C5FD', textShadow: '0 0 12px rgba(147,197,253,0.15)' }} aria-live="polite">
               {formatMMSS(elapsed, showSeconds)}
             </div>
             <div className="mt-3 text-blue-300">
-              Tap anywhere to start/reset â€¢ Tap digits to reset â€¢ touch bottom edge to show controls
+              Tap anywhere to start/reset â€¢ Tap digits to reset â€¢ use bottom ball to show controls
             </div>
           </div>
 
-          {/* Controls (hidden after start; reveal by bottom edge tap) */}
+          {/* Controls (hidden after start; auto-hide 13s unless pinned) */}
           <div className={(running && !showControls ? 'opacity-0 pointer-events-none ' : 'opacity-100 ') + 'transition-opacity duration-200'} onClick={(e) => e.stopPropagation()}>
-            {/* Header */}
             <div className="flex items-center justify-between px-6 py-4">
-              <h1 className="text-xl md:text-2xl font-semibold tracking-tight">V7 Stopwatch</h1>
+              <h1 className="text-xl md:text-2xl font-semibold tracking-tight">V11 Stopwatch</h1>
               <div className="flex gap-2 items-center">
                 {/* Mode toggle (desktop) */}
                 <div className="hidden md:flex items-center rounded-xl border border-blue-800 overflow-hidden">
@@ -324,7 +445,7 @@
                 </div>
 
                 {/* Settings */}
-                <button onClick={(e) => { e.stopPropagation(); setSettingsOpen(true); }} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800 active:scale-95 transition">Settings</button>
+                <button onClick={(e) => { e.stopPropagation(); setSettingsOpen(true); revealControls(13000); }} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800 active:scale-95 transition">Settings</button>
 
                 {/* Start / Pause (stopwatch only) */}
                 {!running ? (
@@ -335,6 +456,14 @@
 
                 {/* Kill switch for music only */}
                 <button onClick={stopMusicOnly} className="px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500 active:scale-95 transition" title="Stop music â€“ stopwatch keeps running">Stop Music</button>
+
+                {/* Pin controls */}
+                <button onClick={(e) => { e.stopPropagation(); setPinned(v => !v); if (!pinned) setShowControls(true); }} className={"px-3 py-2 rounded-xl border " + (pinned ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}>
+                  {pinned ? "Unpin controls" : "Pin controls"}
+                </button>
+
+                {/* Fullscreen */}
+                <FsButton />
               </div>
             </div>
 
@@ -373,16 +502,18 @@
             Active playlist slot: <span className="text-blue-100 font-medium">{activeIndex + 1}</span>
           </div>
 
-          {/* V7 badge (fixed JSX style object) */}
-          <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V7</div>
+          {/* V11 badge */}
+          <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V11</div>
 
-          {/* Settings Modal */}
+          {/* SETTINGS MODAL (fixed) */}
           {settingsOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setSettingsOpen(false)}>
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={(e) => { e.stopPropagation(); setSettingsOpen(false); }}>
               <div className="w-full max-w-3xl rounded-2xl bg-blue-950 border border-blue-900" onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-center justify-between px-5 py-4 border-b border-blue-900">
-                  <h2 className="text-lg font-semibold">Playlists</h2>
+                  <h2 className="text-lg font-semibold">Playlists & Settings</h2>
                   <div className="flex gap-2">
+                    <button onClick={(e) => { e.stopPropagation(); exportSettings(e); }} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800">Export JSON</button>
+                    <button onClick={(e) => { e.stopPropagation(); importSettingsFromFile(e); }} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800">Import JSON</button>
                     <button onClick={(e) => { e.stopPropagation(); setSettingsOpen(false); }} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800">Close</button>
                   </div>
                 </div>
@@ -407,7 +538,7 @@
                         <div className="mt-2 flex items-center justify-between text-xs">
                           <div className="text-blue-400 truncate">ID: {extractPlaylistId(val) || 'â€”'}</div>
                           <button
-                            onClick={() => setActiveIndex(i)}
+                            onClick={(e) => { e.stopPropagation(); setActiveIndex(i); }}
                             className={'ml-2 px-2 py-1 rounded-lg border text-xs transition ' + (activeIndex === i ? 'bg-blue-100 text-blue-900 border-blue-100' : 'bg-blue-900 border-blue-800 hover:bg-blue-800')}
                           >
                             {activeIndex === i ? 'Active' : 'Make Active'}
@@ -422,6 +553,22 @@
           )}
         </div>
       );
+
+      // Local component for fullscreen button to avoid prop threading
+      function FsButton() {
+        const [isFs, setIsFs] = React.useState(!!document.fullscreenElement);
+        React.useEffect(() => {
+          const onFsChange = () => setIsFs(!!document.fullscreenElement);
+          document.addEventListener('fullscreenchange', onFsChange);
+          return () => document.removeEventListener('fullscreenchange', onFsChange);
+        }, []);
+        const toggle = (e) => {
+          e.stopPropagation();
+          if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+          else document.exitFullscreen?.();
+        };
+        return <button onClick={toggle} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800 active:scale-95 transition">{isFs ? 'Exit Fullscreen' : 'Fullscreen'}</button>;
+      }
     }
 
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
