@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>V20 Stopwatch â€“ YouTube Playlist Timer</title>
+  <title>V22 Stopwatch â€“ YouTube Playlist Timer</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     html, body, #root { height: 100%; }
@@ -33,10 +33,31 @@
     const QUICK_MS = [5000, 10000, 15000];
 
     const MODES = ['Single', 'Next', 'Next+Shuffle'];
-    const DEFAULT_PLAYLIST_SLOTS = Array.from({ length: 20 }, () => '');
+    // Injected defaults from JSON (first 3 slots prefilled)
+    const DEFAULT_PLAYLIST_SLOTS = [
+  'https://youtube.com/playlist?list=PLEXox2R2RxZKUmrWKNF61K-kZSov14Snr&si=tOROUpRMmngEZXVm',
+  'https://youtube.com/playlist?list=PLyPTjSogIU3n_Zz734jvnAmeoQlaERcNK&si=bA2LgZZ3TedZqep1',
+  'https://youtube.com/playlist?list=PLHg022HMFzFB7nKvmuvpyGTDPCV7-A8ux&si=-0LbKut547XzIRTI',
+  '',
+  '',
+  '',
+  '',
+  '',
+  '',
+  '',
+  '',
+  '',
+  '',
+  '',
+  '',
+  '',
+  '',
+  '',
+  '',
+  ''
+];
     const DEFAULT_PLAYLIST_NAMES = Array.from({ length: 20 }, () => '');
-    const LS_KEY = 'v15_stopwatch_settings'; // keep compatibility with previous versions
-    const LEGACY_KEYS = ['v14_stopwatch_settings','v13_stopwatch_settings','v12_stopwatch_settings','v11_stopwatch_settings','v10_stopwatch_settings','v9_stopwatch_settings','v8_stopwatch_settings'];
+    const LS_KEY = 'v21_stopwatch_settings'; // new key to keep embedded defaults
 
     const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
     const pad2 = (n) => String(n).padStart(2, '0');
@@ -63,13 +84,13 @@
       const [pinned, setPinned] = useState(false);
       const controlsTimerRef = useRef(null);
 
-      const [secondsMode, setSecondsMode] = useState(SEC_MODES.ON);
-
-      const [musicLenMs, setMusicLenMs] = useState(QUICK_MS[0]);
-      const [mode, setMode] = useState(MODES[0]);
+      // Defaults from JSON: Single, seconds first_min, length 30s, activeIndex 2
+      const [secondsMode, setSecondsMode] = useState(SEC_MODES.FIRST_MIN);
+      const [musicLenMs, setMusicLenMs] = useState(30000);
+      const [mode, setMode] = useState(MODES[0]); // 'Single'
       const [playlistSlots, setPlaylistSlots] = useState(DEFAULT_PLAYLIST_SLOTS);
       const [playlistNames, setPlaylistNames] = useState(DEFAULT_PLAYLIST_NAMES);
-      const [activeIndex, setActiveIndex] = useState(0);
+      const [activeIndex, setActiveIndex] = useState(2);
       const [nowPlaying, setNowPlaying] = useState('');
 
       const [settingsOpen, setSettingsOpen] = useState(false);
@@ -96,12 +117,42 @@
       const [jimmyVisible, setJimmyVisible] = useState(false);
       const jimmyTimerRef = useRef(null);
 
-      const [locked, setLocked] = useState(false); // NEW: lock mode
+      const [locked, setLocked] = useState(false); // lock mode (from v20)
+      // Fullscreen support (Android + Chrome on PC)
+      const [isFs, setIsFs] = useState(false);
+      const enterFullscreen = useCallback(() => {
+        const de = document.documentElement;
+        const req = de.requestFullscreen || de.webkitRequestFullscreen || de.mozRequestFullScreen || de.msRequestFullscreen;
+        if (req) { try { req.call(de, { navigationUI: 'hide' }); } catch(_) { try { req.call(de); } catch(_) {} } }
+      }, []);
+      const exitFullscreen = useCallback(() => {
+        const ex = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
+        if (ex) { try { ex.call(document); } catch(_) {} }
+      }, []);
+      const toggleFullscreen = useCallback((e) => {
+        e?.stopPropagation?.();
+        const fsEl = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement;
+        if (!fsEl) enterFullscreen(); else exitFullscreen();
+      }, [enterFullscreen, exitFullscreen]);
+      useEffect(() => {
+        const onFsChange = () => setIsFs(!!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement));
+        document.addEventListener('fullscreenchange', onFsChange);
+        document.addEventListener('webkitfullscreenchange', onFsChange);
+        document.addEventListener('mozfullscreenchange', onFsChange);
+        document.addEventListener('MSFullscreenChange', onFsChange);
+        return () => {
+          document.removeEventListener('fullscreenchange', onFsChange);
+          document.removeEventListener('webkitfullscreenchange', onFsChange);
+          document.removeEventListener('mozfullscreenchange', onFsChange);
+          document.removeEventListener('MSFullscreenChange', onFsChange);
+        };
+      }, []);
 
+
+      // Load from localStorage if present (no legacy migration to keep embedded defaults)
       useEffect(() => {
         try {
           let raw = localStorage.getItem(LS_KEY);
-          if (!raw) { for (const k of LEGACY_KEYS) { raw = localStorage.getItem(k); if (raw) break; } }
           if (raw) {
             const p = JSON.parse(raw);
             if (Array.isArray(p.playlistSlots)) setPlaylistSlots([...DEFAULT_PLAYLIST_SLOTS].map((_, i) => p.playlistSlots[i] || ''));
@@ -235,7 +286,7 @@
 
       useEffect(() => {
         const onKey = (e) => {
-          if (locked) return; // block keyboard when locked
+          if (locked) return;
           const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
           if (tag === 'input' || tag === 'textarea' || e.isContentEditable) return;
           const key = (e.key || '').toLowerCase();
@@ -252,7 +303,7 @@
 
       const exportSettings = useCallback((e) => {
         e?.stopPropagation?.();
-        const data = { version: 'v20', playlistSlots, playlistNames, activeIndex, musicLenMs, mode, secondsMode, bgIndex };
+        const data = { version: 'v21', playlistSlots, playlistNames, activeIndex, musicLenMs, mode, secondsMode, bgIndex };
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'stopwatch-settings.json'; a.click(); URL.revokeObjectURL(a.href);
       }, [playlistSlots, playlistNames, activeIndex, musicLenMs, mode, secondsMode, bgIndex]);
@@ -279,10 +330,10 @@
         <div className="min-h-screen w-full text-blue-200 flex flex-col relative" style={{ backgroundColor: BG_CYCLE[bgIndex] }} onClick={handleGlobalTap}>
           <input type="file" ref={fileInputRef} accept="application/json" className="hidden" onChange={onImportFileChange} />
 
-          {/* LOCKED frame overlay (visual only) */}
+          {/* LOCKED frame overlay */}
           {locked && <div className="fixed inset-0 border-4 border-dashed border-orange-400 z-40 pointer-events-none" />}
 
-          {/* TOUCH BLOCKER overlay when locked (captures all interactions) */}
+          {/* TOUCH BLOCKER overlay when locked */}
           {locked && <div className="fixed inset-0 z-40" />}
 
           <header className="sticky top-0 z-30 w-full bg-black/10 backdrop-blur border-b border-blue-900">
@@ -318,6 +369,7 @@
                   <button onClick={(e)=>{ if (locked) return; setSettingsOpen(true); showControls(13000); }} className="px-3 py-2 rounded-xl bg-orange-600 hover:bg-orange-500 text-white">Settings</button>
                   <button onClick={handlePauseToggle} className="px-3 py-2 rounded-xl bg-blue-900/70 hover:bg-blue-800">{paused ? "Resume" : "Pause"}</button>
                   <button onClick={stopMusicOnly} className="px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500">Stop Music</button>
+                  <FsButton isFs={isFs} onToggle={toggleFullscreen} />
                 </div>
               </div>
             </div>
@@ -345,6 +397,7 @@
                   <button onClick={() => !locked && setSecondsMode(SEC_MODES.OFF)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.OFF ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900/70 border-blue-800 hover:bg-blue-800")}>Hide seconds</button>
                   <button onClick={() => !locked && setSecondsMode(SEC_MODES.FIRST_MIN)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.FIRST_MIN ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900/70 border-blue-800 hover:bg-blue-800")}>First minute</button>
                   <button onClick={() => !locked && setSecondsMode(SEC_MODES.EVERY_10S)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.EVERY_10S ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900/70 border-blue-800 hover:bg-blue-800")}>Every 10s</button>
+                  <FsButton isFs={isFs} onToggle={toggleFullscreen} />
                 </div>
               </div>
             </div>
@@ -359,7 +412,7 @@
               </div>
             </div>
 
-            <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V20</div>
+            <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V22</div>
           </main>
 
           {settingsOpen && (
@@ -411,7 +464,7 @@
             </div>
           )}
 
-          {/* ORANGE LOCK/UNLOCK BUTTON (always visible, even when locked) */}
+          {/* ORANGE LOCK/UNLOCK BUTTON */}
           <button
             className="fixed bottom-6 left-6 w-14 h-14 rounded-full bg-orange-500 hover:bg-orange-400 active:scale-95 shadow-lg z-50 transition"
             onClick={(e) => { e.stopPropagation(); setLocked(v => !v); }}
@@ -421,8 +474,13 @@
       );
     }
 
+
+    function FsButton({ isFs, onToggle }) {
+      return <button onClick={onToggle} className="px-3 py-2 rounded-xl bg-green-600 hover:bg-green-500 text-white">{isFs ? 'Exit Fullscreen' : 'Fullscreen'}</button>;
+    }
+
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    
   </script>
 </body>
 </html>
-
