@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>V4 Stopwatch â€“ YouTube Playlist Timer</title>
+  <title>V7 Stopwatch â€“ YouTube Playlist Timer</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     html, body, #root { height: 100%; }
@@ -25,7 +25,8 @@
   <script type="text/babel">
     const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-    const PRESETS = [
+    // Music length presets (do NOT affect stopwatch)
+    const MUSIC_PRESETS = [
       { label: '3s', ms: 3000 },
       { label: '5s', ms: 5000 },
       { label: '10s', ms: 10000 },
@@ -36,7 +37,7 @@
     ];
     const MODES = ['Single', 'Next', 'Next+Shuffle'];
     const DEFAULT_PLAYLIST_SLOTS = Array.from({ length: 20 }, () => '');
-    const LS_KEY = 'v4_stopwatch_settings';
+    const LS_KEY = 'v7_stopwatch_settings';
 
     const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
     const pad2 = (n) => String(n).padStart(2, '0');
@@ -55,31 +56,44 @@
       } catch (_) {}
       return s;
     };
+    const formatMMSS = (ms, showSeconds=true) => {
+      const totalSec = Math.floor(Math.max(0, ms)/1000);
+      const mm = Math.floor(totalSec/60);
+      const ss = totalSec % 60;
+      return showSeconds ? (pad2(mm) + ':' + pad2(ss)) : pad2(mm);
+    };
 
     function App() {
+      // Stopwatch
       const [elapsed, setElapsed] = useState(0);
       const [running, setRunning] = useState(false);
       const [paused, setPaused] = useState(false);
-      const [targetMs, setTargetMs] = useState(PRESETS[2].ms); // default 10s
+      const [showSeconds, setShowSeconds] = useState(true);
+
+      // Controls visibility
+      const [showControls, setShowControls] = useState(true);
+      const controlsTimerRef = useRef(null);
+
+      // Music
+      const [musicLenMs, setMusicLenMs] = useState(MUSIC_PRESETS[2].ms);
+      const [mode, setMode] = useState(MODES[0]);
       const [playlistSlots, setPlaylistSlots] = useState(DEFAULT_PLAYLIST_SLOTS);
       const [activeIndex, setActiveIndex] = useState(0);
       const [settingsOpen, setSettingsOpen] = useState(false);
-      const [mode, setMode] = useState(MODES[0]); // Single
-      const [clock, setClock] = useState(nowClock());
 
-      // YouTube player refs
+      // YouTube
       const playerRef = useRef(null);
       const playerReadyRef = useRef(false);
       const playlistLoadedRef = useRef(false);
+      const musicStopTimeoutRef = useRef(null);
 
+      // Timing
       const rafRef = useRef(null);
       const startTimeRef = useRef(null);
 
-      // Update clock
-      useEffect(() => {
-        const id = setInterval(() => setClock(nowClock()), 1000);
-        return () => clearInterval(id);
-      }, []);
+      // Clock
+      const [clock, setClock] = useState(nowClock());
+      useEffect(() => { const id = setInterval(() => setClock(nowClock()), 1000); return () => clearInterval(id); }, []);
 
       // Load settings
       useEffect(() => {
@@ -92,31 +106,29 @@
               setPlaylistSlots(merged);
             }
             if (typeof p.activeIndex === 'number') setActiveIndex(clamp(p.activeIndex, 0, 19));
-            if (typeof p.targetMs === 'number' || p.targetMs === null) setTargetMs(p.targetMs);
+            if (typeof p.musicLenMs === 'number' || p.musicLenMs === null) setMusicLenMs(p.musicLenMs);
             if (MODES.includes(p.mode)) setMode(p.mode);
+            if (typeof p.showSeconds === 'boolean') setShowSeconds(p.showSeconds);
           }
         } catch (_) {}
       }, []);
 
       // Persist settings
       useEffect(() => {
-        localStorage.setItem(LS_KEY, JSON.stringify({ playlistSlots, activeIndex, targetMs, mode }));
-      }, [playlistSlots, activeIndex, targetMs, mode]);
+        localStorage.setItem(LS_KEY, JSON.stringify({ playlistSlots, activeIndex, musicLenMs, mode, showSeconds }));
+      }, [playlistSlots, activeIndex, musicLenMs, mode, showSeconds]);
 
-      const activePlaylistId = useMemo(
-        () => extractPlaylistId(playlistSlots[activeIndex] || ''),
-        [playlistSlots, activeIndex]
-      );
+      const activePlaylistId = useMemo(() => extractPlaylistId(playlistSlots[activeIndex] || ''), [playlistSlots, activeIndex]);
 
-      // YT API setup
+      // YouTube API
       useEffect(() => {
         function onReady() {
           playerReadyRef.current = true;
           playlistLoadedRef.current = false;
         }
         function onStateChange(evt) {
-          // When a track ends in Full song mode, advance depending on mode (except Single)
-          if (evt?.data === 0 && targetMs === null) {
+          // Full song behavior: when a track ends, advance if Next/Next+Shuffle
+          if (evt?.data === 0 && musicLenMs === null) {
             if (mode === 'Next+Shuffle') {
               try { playerRef.current.setShuffle(true); playerRef.current.nextVideo(); playerRef.current.playVideo(); } catch (_) {}
             } else if (mode === 'Next') {
@@ -135,12 +147,24 @@
         }
         if (window.YT?.Player) initPlayer();
         else { window.onYouTubeIframeAPIReady = initPlayer; }
-      }, [mode, targetMs]);
+      }, [musicLenMs, mode]);
 
-      // Reset load flag when playlist changes
       useEffect(() => { playlistLoadedRef.current = false; }, [activePlaylistId]);
 
-      // Core action according to Mode, ensuring playlist is loaded and playing
+      // Music helpers
+      const clearMusicTimer = useCallback(() => {
+        if (musicStopTimeoutRef.current) {
+          clearTimeout(musicStopTimeoutRef.current);
+          musicStopTimeoutRef.current = null;
+        }
+      }, []);
+
+      const stopMusicOnly = useCallback((e) => {
+        e?.stopPropagation?.();
+        clearMusicTimer();
+        try { playerRef.current?.stopVideo(); } catch (_) {}
+      }, [clearMusicTimer]);
+
       const ensureLoadedAndPlay = useCallback(() => {
         if (!playerReadyRef.current || !playerRef.current || !activePlaylistId) return;
         try {
@@ -161,29 +185,25 @@
             playerRef.current.nextVideo();
             playerRef.current.playVideo();
           }
+          // Schedule stop for music only (stopwatch keeps running)
+          clearMusicTimer();
+          if (typeof musicLenMs === 'number' && musicLenMs > 0) {
+            musicStopTimeoutRef.current = setTimeout(() => {
+              try { playerRef.current?.pauseVideo(); } catch (_) {}
+              musicStopTimeoutRef.current = null;
+            }, musicLenMs);
+          }
         } catch (e) { console.warn('YT play error:', e); }
-      }, [activePlaylistId, mode]);
+      }, [activePlaylistId, mode, musicLenMs, clearMusicTimer]);
 
-      const stopAll = useCallback((e) => {
-        e?.stopPropagation?.();
-        try { playerRef.current?.stopVideo(); } catch (_) {}
-        setRunning(false);
-        setPaused(false);
-      }, []);
-
-      // Timer tick (seconds only display)
+      // Stopwatch loop
       const tick = useCallback((now) => {
         if (!running || paused) return;
         if (startTimeRef.current == null) startTimeRef.current = now - elapsed;
         const newElapsed = now - startTimeRef.current;
         setElapsed(newElapsed);
-        if (typeof targetMs === 'number' && targetMs > 0 && newElapsed >= targetMs) {
-          startTimeRef.current = now;
-          setElapsed(0);
-          ensureLoadedAndPlay();
-        }
         rafRef.current = requestAnimationFrame(tick);
-      }, [elapsed, running, paused, targetMs, ensureLoadedAndPlay]);
+      }, [elapsed, running, paused]);
 
       useEffect(() => {
         if (running && !paused) {
@@ -193,112 +213,159 @@
         return () => {};
       }, [running, paused, tick]);
 
-      // Tap anywhere to start/reset (user gesture satisfies autoplay)
-      const handleGlobalPress = useCallback(() => {
-        if (!running) {
-          setRunning(true);
-          setPaused(false);
-          startTimeRef.current = performance.now();
-          setElapsed(0);
-          ensureLoadedAndPlay();
-        } else {
-          setPaused(false);
-          startTimeRef.current = performance.now();
-          setElapsed(0);
-          ensureLoadedAndPlay();
-        }
+      // Reveal controls bottom 10%
+      const revealControls = useCallback((ms=5000) => {
+        setShowControls(true);
+        if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+        controlsTimerRef.current = setTimeout(() => setShowControls(false), ms);
+      }, []);
+
+      // Start / Reset logic
+      const startStopwatchAndMusic = useCallback(() => {
+        setRunning(true);
+        setPaused(false);
+        startTimeRef.current = performance.now();
+        setElapsed(0);
+        ensureLoadedAndPlay();
+        setShowControls(false);
+      }, [ensureLoadedAndPlay]);
+
+      const resetStopwatchAndMusic = useCallback(() => {
+        if (!running) return;
+        startTimeRef.current = performance.now();
+        setElapsed(0);
+        ensureLoadedAndPlay();
       }, [running, ensureLoadedAndPlay]);
 
+      // Global tap anywhere: if not running -> start; else -> reset
+      const handleGlobalTap = useCallback((e) => {
+        // ignore if tap comes from controls or reveal zone
+        // (we'll stopPropagation in those elements)
+        if (!running) startStopwatchAndMusic();
+        else resetStopwatchAndMusic();
+      }, [running, startStopwatchAndMusic, resetStopwatchAndMusic]);
+
+      // Pause/Resume stopwatch only
       const handlePauseToggle = useCallback((e) => {
-        e.stopPropagation();
+        e?.stopPropagation?.();
         if (!running) return;
         setPaused((p) => {
           const next = !p;
-          try { if (next) playerRef.current?.pauseVideo(); else playerRef.current?.playVideo(); } catch (_) {}
           if (!next) startTimeRef.current = performance.now() - elapsed;
           return next;
         });
-      }, [elapsed, running]);
+      }, [running, elapsed]);
 
-      const selectPreset = useCallback((preset, e) => {
-        e.stopPropagation();
-        setTargetMs(preset.ms);
+      const selectMusicPreset = useCallback((preset, e) => {
+        e?.stopPropagation?.();
+        setMusicLenMs(preset.ms);
       }, []);
 
-      // UI
       return (
-        <div className="min-h-screen w-full bg-blue-950 text-blue-200 relative select-none" onClick={handleGlobalPress}>
-          {/* Top-left clock (blue) */}
+        <div className="min-h-screen w-full bg-blue-950 text-blue-200 relative select-none" onClick={handleGlobalTap}>
+          {/* Top-left clock */}
           <div className="absolute top-3 left-4 text-blue-400 font-semibold">â° {clock}</div>
 
-          {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4">
-            <h1 className="text-xl md:text-2xl font-semibold tracking-tight">V4 Stopwatch</h1>
-            <div className="flex gap-2 items-center">
-              {/* Mode toggle (desktop) */}
-              <div className="hidden md:flex items-center rounded-xl border border-blue-800 overflow-hidden">
-                {MODES.map((m, idx) => (
+          {/* Bottom 10% reveal area */}
+          <div className="fixed bottom-0 left-0 w-full" style={{ height: '10vh' }} onClick={(e) => { e.stopPropagation(); revealControls(5000); }} />
+
+          {/* Center stopwatch (clicking numbers resets) */}
+          <div className="grid place-items-center py-10 md:py-16" onClick={(e) => { e.stopPropagation(); resetStopwatchAndMusic(); }}>
+            <div className="text-[20vw] md:text-[12rem] leading-none font-bold drop-shadow" style={{ color: '#BFDBFE' }} aria-live="polite">
+              {formatMMSS(elapsed, showSeconds)}
+            </div>
+            <div className="mt-3 text-blue-300">
+              Tap anywhere to start/reset â€¢ Tap digits to reset â€¢ touch bottom edge to show controls
+            </div>
+          </div>
+
+          {/* Controls (hidden after start; reveal by bottom edge tap) */}
+          <div className={(running && !showControls ? 'opacity-0 pointer-events-none ' : 'opacity-100 ') + 'transition-opacity duration-200'} onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4">
+              <h1 className="text-xl md:text-2xl font-semibold tracking-tight">V7 Stopwatch</h1>
+              <div className="flex gap-2 items-center">
+                {/* Mode toggle (desktop) */}
+                <div className="hidden md:flex items-center rounded-xl border border-blue-800 overflow-hidden">
+                  {MODES.map((m, idx) => (
+                    <button
+                      key={m}
+                      onClick={(e) => { e.stopPropagation(); setMode(m); }}
+                      className={
+                        "px-3 py-2 text-sm " +
+                        (idx > 0 ? "border-l border-blue-800 " : "") +
+                        (m === mode ? "bg-blue-100 text-blue-900" : "bg-blue-900 hover:bg-blue-800")
+                      }
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Toggle seconds */}
+                <button onClick={(e) => { e.stopPropagation(); setShowSeconds(s => !s); }} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800 active:scale-95 transition">
+                  {showSeconds ? 'Hide seconds' : 'Show seconds'}
+                </button>
+
+                {/* Music length presets */}
+                <div className="hidden md:flex flex-wrap gap-2 ml-2">
+                  {MUSIC_PRESETS.map((p) => (
+                    <button
+                      key={p.label}
+                      onClick={(e) => selectMusicPreset(p, e)}
+                      className={
+                        "px-3 py-2 rounded-xl border transition " +
+                        (musicLenMs === p.ms ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")
+                      }
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Settings */}
+                <button onClick={(e) => { e.stopPropagation(); setSettingsOpen(true); }} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800 active:scale-95 transition">Settings</button>
+
+                {/* Start / Pause (stopwatch only) */}
+                {!running ? (
+                  <button onClick={(e) => { e.stopPropagation(); startStopwatchAndMusic(); }} className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 transition">Start</button>
+                ) : (
+                  <button onClick={handlePauseToggle} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800 active:scale-95 transition">{paused ? "Resume" : "Pause"}</button>
+                )}
+
+                {/* Kill switch for music only */}
+                <button onClick={stopMusicOnly} className="px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500 active:scale-95 transition" title="Stop music â€“ stopwatch keeps running">Stop Music</button>
+              </div>
+            </div>
+
+            {/* Mobile controls */}
+            <div className="px-6 md:hidden space-y-2">
+              <div className="grid grid-cols-3 gap-2">
+                {MODES.map((m) => (
                   <button
                     key={m}
                     onClick={(e) => { e.stopPropagation(); setMode(m); }}
-                    className={
-                      "px-3 py-2 text-sm " +
-                      (idx > 0 ? "border-l border-blue-800 " : "") +
-                      (m === mode ? "bg-blue-100 text-blue-900" : "bg-blue-900 hover:bg-blue-800")
-                    }
+                    className={"px-3 py-2 rounded-xl text-sm " + (m === mode ? "bg-blue-100 text-blue-900" : "bg-blue-900 hover:bg-blue-800")}
                   >
                     {m}
                   </button>
                 ))}
               </div>
-
-              <button onClick={(e) => { e.stopPropagation(); setSettingsOpen(true); }} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800 active:scale-95 transition">Settings</button>
-              <button onClick={(e) => { e.stopPropagation(); setElapsed(0); startTimeRef.current = performance.now(); setRunning(true); setPaused(false); ensureLoadedAndPlay(); }} className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 transition">Play / Reset</button>
-              <button onClick={handlePauseToggle} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800 active:scale-95 transition">{paused ? "Resume" : "Pause"}</button>
-              <button onClick={stopAll} className="px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500 active:scale-95 transition" title="Immediately stop playback">Stop</button>
-            </div>
-          </div>
-
-          {/* Mobile mode toggle */}
-          <div className="px-6 md:hidden">
-            <div className="grid grid-cols-3 gap-2 mb-2">
-              {MODES.map((m) => (
-                <button
-                  key={m}
-                  onClick={(e) => { e.stopPropagation(); setMode(m); }}
-                  className={"px-3 py-2 rounded-xl text-sm " + (m === mode ? "bg-blue-100 text-blue-900" : "bg-blue-900 hover:bg-blue-800")}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Seconds-only big display */}
-          <div className="grid place-items-center py-10 md:py-16" style={{ cursor: 'pointer' }}>
-            <div
-              className="text-[20vw] md:text-[12rem] leading-none font-bold drop-shadow"
-              style={{ color: '#BFDBFE' }}
-              aria-live="polite"
-            >
-              {Math.floor(elapsed / 1000)}
-            </div>
-            <div className="mt-3 text-blue-300">
-              Tap anywhere to start/reset â€¢ {targetMs ? ("Loop every " + Math.round(targetMs/1000) + "s") : "Full song"} â€¢ Mode: <span className="text-blue-200">{mode}</span>
-            </div>
-          </div>
-
-          {/* Presets */}
-          <div className="flex flex-wrap items-center justify-center gap-2 px-6">
-            {PRESETS.map((p) => (
-              <button
-                key={p.label}
-                onClick={(e) => selectPreset(p, e)}
-                className={"px-4 py-2 rounded-2xl border transition active:scale-95 " + (targetMs === p.ms ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}
-              >
-                {p.label}
+              <div className="grid grid-cols-3 gap-2">
+                {MUSIC_PRESETS.map((p) => (
+                  <button
+                    key={p.label}
+                    onClick={(e) => selectMusicPreset(p, e)}
+                    className={"px-3 py-2 rounded-xl text-sm " + (musicLenMs === p.ms ? "bg-blue-100 text-blue-900" : "bg-blue-900 hover:bg-blue-800")}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <button onClick={(e) => { e.stopPropagation(); setShowSeconds(s => !s); }} className="w-full px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800">
+                {showSeconds ? 'Hide seconds' : 'Show seconds'}
               </button>
-            ))}
+            </div>
           </div>
 
           {/* Active slot */}
@@ -306,8 +373,8 @@
             Active playlist slot: <span className="text-blue-100 font-medium">{activeIndex + 1}</span>
           </div>
 
-          {/* V4 badge */}
-          <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V4</div>
+          {/* V7 badge (fixed JSX style object) */}
+          <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V7</div>
 
           {/* Settings Modal */}
           {settingsOpen && (
@@ -316,24 +383,11 @@
                 <div className="flex items-center justify-between px-5 py-4 border-b border-blue-900">
                   <h2 className="text-lg font-semibold">Playlists</h2>
                   <div className="flex gap-2">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const a = document.createElement('a');
-                        const html = document.documentElement.outerHTML;
-                        const blob = new Blob([html], { type: 'text/html' });
-                        a.href = URL.createObjectURL(blob);
-                        a.download = 'v4-stopwatch.html';
-                        a.click();
-                        URL.revokeObjectURL(a.href);
-                      }}
-                      className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800"
-                    >Download HTML</button>
                     <button onClick={(e) => { e.stopPropagation(); setSettingsOpen(false); }} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800">Close</button>
                   </div>
                 </div>
 
-                <div className="max-h[60vh] overflow-y-auto p-5 space-y-4">
+                <div className="max-h-[60vh] overflow-y-auto p-5 space-y-4">
                   <p className="text-sm text-blue-300">Add up to 20 YouTube playlists. Paste a playlist URL or just the playlist ID. Select the active slot.</p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {playlistSlots.map((val, i) => (
