@@ -1,1 +1,376 @@
-ff
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>V4 Stopwatch â€“ YouTube Playlist Timer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    html, body, #root { height: 100%; }
+    body { font-family: Helvetica, Arial, sans-serif; }
+  </style>
+</head>
+<body class="bg-blue-950 text-blue-200">
+  <div id="root" class="h-full"></div>
+  <!-- Keep the iframe present (1x1 offscreen) to satisfy autoplay; NOT display:none -->
+  <div id="yt-player" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;"></div>
+
+  <!-- React + Babel -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- YouTube IFrame API -->
+  <script src="https://www.youtube.com/iframe_api"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+    const PRESETS = [
+      { label: '3s', ms: 3000 },
+      { label: '5s', ms: 5000 },
+      { label: '10s', ms: 10000 },
+      { label: '20s', ms: 20000 },
+      { label: '30s', ms: 30000 },
+      { label: '1 min', ms: 60000 },
+      { label: 'Full song', ms: null },
+    ];
+    const MODES = ['Single', 'Next', 'Next+Shuffle'];
+    const DEFAULT_PLAYLIST_SLOTS = Array.from({ length: 20 }, () => '');
+    const LS_KEY = 'v4_stopwatch_settings';
+
+    const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+    const pad2 = (n) => String(n).padStart(2, '0');
+    const nowClock = () => {
+      const d = new Date();
+      return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+    };
+    const extractPlaylistId = (input) => {
+      if (!input) return '';
+      const s = input.trim();
+      if (/^[A-Za-z0-9_-]{10,}$/.test(s)) return s;
+      try {
+        const url = new URL(s);
+        const list = url.searchParams.get('list');
+        if (list) return list;
+      } catch (_) {}
+      return s;
+    };
+
+    function App() {
+      const [elapsed, setElapsed] = useState(0);
+      const [running, setRunning] = useState(false);
+      const [paused, setPaused] = useState(false);
+      const [targetMs, setTargetMs] = useState(PRESETS[2].ms); // default 10s
+      const [playlistSlots, setPlaylistSlots] = useState(DEFAULT_PLAYLIST_SLOTS);
+      const [activeIndex, setActiveIndex] = useState(0);
+      const [settingsOpen, setSettingsOpen] = useState(false);
+      const [mode, setMode] = useState(MODES[0]); // Single
+      const [clock, setClock] = useState(nowClock());
+
+      // YouTube player refs
+      const playerRef = useRef(null);
+      const playerReadyRef = useRef(false);
+      const playlistLoadedRef = useRef(false);
+
+      const rafRef = useRef(null);
+      const startTimeRef = useRef(null);
+
+      // Update clock
+      useEffect(() => {
+        const id = setInterval(() => setClock(nowClock()), 1000);
+        return () => clearInterval(id);
+      }, []);
+
+      // Load settings
+      useEffect(() => {
+        try {
+          const raw = localStorage.getItem(LS_KEY);
+          if (raw) {
+            const p = JSON.parse(raw);
+            if (Array.isArray(p.playlistSlots)) {
+              const merged = [...DEFAULT_PLAYLIST_SLOTS].map((_, i) => p.playlistSlots[i] || '');
+              setPlaylistSlots(merged);
+            }
+            if (typeof p.activeIndex === 'number') setActiveIndex(clamp(p.activeIndex, 0, 19));
+            if (typeof p.targetMs === 'number' || p.targetMs === null) setTargetMs(p.targetMs);
+            if (MODES.includes(p.mode)) setMode(p.mode);
+          }
+        } catch (_) {}
+      }, []);
+
+      // Persist settings
+      useEffect(() => {
+        localStorage.setItem(LS_KEY, JSON.stringify({ playlistSlots, activeIndex, targetMs, mode }));
+      }, [playlistSlots, activeIndex, targetMs, mode]);
+
+      const activePlaylistId = useMemo(
+        () => extractPlaylistId(playlistSlots[activeIndex] || ''),
+        [playlistSlots, activeIndex]
+      );
+
+      // YT API setup
+      useEffect(() => {
+        function onReady() {
+          playerReadyRef.current = true;
+          playlistLoadedRef.current = false;
+        }
+        function onStateChange(evt) {
+          // When a track ends in Full song mode, advance depending on mode (except Single)
+          if (evt?.data === 0 && targetMs === null) {
+            if (mode === 'Next+Shuffle') {
+              try { playerRef.current.setShuffle(true); playerRef.current.nextVideo(); playerRef.current.playVideo(); } catch (_) {}
+            } else if (mode === 'Next') {
+              try { playerRef.current.setShuffle(false); playerRef.current.nextVideo(); playerRef.current.playVideo(); } catch (_) {}
+            }
+          }
+        }
+        function initPlayer() {
+          if (playerRef.current || !window.YT?.Player) return;
+          playerRef.current = new window.YT.Player('yt-player', {
+            height: '1',
+            width: '1',
+            playerVars: { autoplay: 0, controls: 0, modestbranding: 1, rel: 0, playsinline: 1, enablejsapi: 1 },
+            events: { onReady, onStateChange },
+          });
+        }
+        if (window.YT?.Player) initPlayer();
+        else { window.onYouTubeIframeAPIReady = initPlayer; }
+      }, [mode, targetMs]);
+
+      // Reset load flag when playlist changes
+      useEffect(() => { playlistLoadedRef.current = false; }, [activePlaylistId]);
+
+      // Core action according to Mode, ensuring playlist is loaded and playing
+      const ensureLoadedAndPlay = useCallback(() => {
+        if (!playerReadyRef.current || !playerRef.current || !activePlaylistId) return;
+        try {
+          if (!playlistLoadedRef.current) {
+            playerRef.current.loadPlaylist({ listType: 'playlist', list: activePlaylistId, index: 0 });
+            playlistLoadedRef.current = true;
+          }
+          playerRef.current.unMute && playerRef.current.unMute();
+          playerRef.current.setVolume && playerRef.current.setVolume(100);
+          if (mode === 'Single') {
+            playerRef.current.playVideo();
+          } else if (mode === 'Next+Shuffle') {
+            playerRef.current.setShuffle(true);
+            playerRef.current.nextVideo();
+            playerRef.current.playVideo();
+          } else {
+            playerRef.current.setShuffle(false);
+            playerRef.current.nextVideo();
+            playerRef.current.playVideo();
+          }
+        } catch (e) { console.warn('YT play error:', e); }
+      }, [activePlaylistId, mode]);
+
+      const stopAll = useCallback((e) => {
+        e?.stopPropagation?.();
+        try { playerRef.current?.stopVideo(); } catch (_) {}
+        setRunning(false);
+        setPaused(false);
+      }, []);
+
+      // Timer tick (seconds only display)
+      const tick = useCallback((now) => {
+        if (!running || paused) return;
+        if (startTimeRef.current == null) startTimeRef.current = now - elapsed;
+        const newElapsed = now - startTimeRef.current;
+        setElapsed(newElapsed);
+        if (typeof targetMs === 'number' && targetMs > 0 && newElapsed >= targetMs) {
+          startTimeRef.current = now;
+          setElapsed(0);
+          ensureLoadedAndPlay();
+        }
+        rafRef.current = requestAnimationFrame(tick);
+      }, [elapsed, running, paused, targetMs, ensureLoadedAndPlay]);
+
+      useEffect(() => {
+        if (running && !paused) {
+          rafRef.current = requestAnimationFrame(tick);
+          return () => cancelAnimationFrame(rafRef.current);
+        }
+        return () => {};
+      }, [running, paused, tick]);
+
+      // Tap anywhere to start/reset (user gesture satisfies autoplay)
+      const handleGlobalPress = useCallback(() => {
+        if (!running) {
+          setRunning(true);
+          setPaused(false);
+          startTimeRef.current = performance.now();
+          setElapsed(0);
+          ensureLoadedAndPlay();
+        } else {
+          setPaused(false);
+          startTimeRef.current = performance.now();
+          setElapsed(0);
+          ensureLoadedAndPlay();
+        }
+      }, [running, ensureLoadedAndPlay]);
+
+      const handlePauseToggle = useCallback((e) => {
+        e.stopPropagation();
+        if (!running) return;
+        setPaused((p) => {
+          const next = !p;
+          try { if (next) playerRef.current?.pauseVideo(); else playerRef.current?.playVideo(); } catch (_) {}
+          if (!next) startTimeRef.current = performance.now() - elapsed;
+          return next;
+        });
+      }, [elapsed, running]);
+
+      const selectPreset = useCallback((preset, e) => {
+        e.stopPropagation();
+        setTargetMs(preset.ms);
+      }, []);
+
+      // UI
+      return (
+        <div className="min-h-screen w-full bg-blue-950 text-blue-200 relative select-none" onClick={handleGlobalPress}>
+          {/* Top-left clock (blue) */}
+          <div className="absolute top-3 left-4 text-blue-400 font-semibold">â° {clock}</div>
+
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-4">
+            <h1 className="text-xl md:text-2xl font-semibold tracking-tight">V4 Stopwatch</h1>
+            <div className="flex gap-2 items-center">
+              {/* Mode toggle (desktop) */}
+              <div className="hidden md:flex items-center rounded-xl border border-blue-800 overflow-hidden">
+                {MODES.map((m, idx) => (
+                  <button
+                    key={m}
+                    onClick={(e) => { e.stopPropagation(); setMode(m); }}
+                    className={
+                      "px-3 py-2 text-sm " +
+                      (idx > 0 ? "border-l border-blue-800 " : "") +
+                      (m === mode ? "bg-blue-100 text-blue-900" : "bg-blue-900 hover:bg-blue-800")
+                    }
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+
+              <button onClick={(e) => { e.stopPropagation(); setSettingsOpen(true); }} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800 active:scale-95 transition">Settings</button>
+              <button onClick={(e) => { e.stopPropagation(); setElapsed(0); startTimeRef.current = performance.now(); setRunning(true); setPaused(false); ensureLoadedAndPlay(); }} className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 transition">Play / Reset</button>
+              <button onClick={handlePauseToggle} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800 active:scale-95 transition">{paused ? "Resume" : "Pause"}</button>
+              <button onClick={stopAll} className="px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500 active:scale-95 transition" title="Immediately stop playback">Stop</button>
+            </div>
+          </div>
+
+          {/* Mobile mode toggle */}
+          <div className="px-6 md:hidden">
+            <div className="grid grid-cols-3 gap-2 mb-2">
+              {MODES.map((m) => (
+                <button
+                  key={m}
+                  onClick={(e) => { e.stopPropagation(); setMode(m); }}
+                  className={"px-3 py-2 rounded-xl text-sm " + (m === mode ? "bg-blue-100 text-blue-900" : "bg-blue-900 hover:bg-blue-800")}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Seconds-only big display */}
+          <div className="grid place-items-center py-10 md:py-16" style={{ cursor: 'pointer' }}>
+            <div
+              className="text-[20vw] md:text-[12rem] leading-none font-bold drop-shadow"
+              style={{ color: '#BFDBFE' }}
+              aria-live="polite"
+            >
+              {Math.floor(elapsed / 1000)}
+            </div>
+            <div className="mt-3 text-blue-300">
+              Tap anywhere to start/reset â€¢ {targetMs ? ("Loop every " + Math.round(targetMs/1000) + "s") : "Full song"} â€¢ Mode: <span className="text-blue-200">{mode}</span>
+            </div>
+          </div>
+
+          {/* Presets */}
+          <div className="flex flex-wrap items-center justify-center gap-2 px-6">
+            {PRESETS.map((p) => (
+              <button
+                key={p.label}
+                onClick={(e) => selectPreset(p, e)}
+                className={"px-4 py-2 rounded-2xl border transition active:scale-95 " + (targetMs === p.ms ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900 border-blue-800 hover:bg-blue-800")}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Active slot */}
+          <div className="mt-6 text-center text-sm text-blue-300">
+            Active playlist slot: <span className="text-blue-100 font-medium">{activeIndex + 1}</span>
+          </div>
+
+          {/* V4 badge */}
+          <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V4</div>
+
+          {/* Settings Modal */}
+          {settingsOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setSettingsOpen(false)}>
+              <div className="w-full max-w-3xl rounded-2xl bg-blue-950 border border-blue-900" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center justify-between px-5 py-4 border-b border-blue-900">
+                  <h2 className="text-lg font-semibold">Playlists</h2>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const a = document.createElement('a');
+                        const html = document.documentElement.outerHTML;
+                        const blob = new Blob([html], { type: 'text/html' });
+                        a.href = URL.createObjectURL(blob);
+                        a.download = 'v4-stopwatch.html';
+                        a.click();
+                        URL.revokeObjectURL(a.href);
+                      }}
+                      className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800"
+                    >Download HTML</button>
+                    <button onClick={(e) => { e.stopPropagation(); setSettingsOpen(false); }} className="px-3 py-2 rounded-xl bg-blue-900 hover:bg-blue-800">Close</button>
+                  </div>
+                </div>
+
+                <div className="max-h[60vh] overflow-y-auto p-5 space-y-4">
+                  <p className="text-sm text-blue-300">Add up to 20 YouTube playlists. Paste a playlist URL or just the playlist ID. Select the active slot.</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {playlistSlots.map((val, i) => (
+                      <div key={i} className="rounded-xl border border-blue-900 p-3">
+                        <label className="text-xs text-blue-300">Slot {i + 1}</label>
+                        <input
+                          type="text"
+                          placeholder="Playlist URL or ID"
+                          value={val}
+                          onChange={(e) => {
+                            const next = [...playlistSlots];
+                            next[i] = e.target.value;
+                            setPlaylistSlots(next);
+                          }}
+                          className="mt-1 w-full rounded-lg bg-blue-900 border border-blue-800 px-3 py-2 outline-none focus:border-blue-400"
+                        />
+                        <div className="mt-2 flex items-center justify-between text-xs">
+                          <div className="text-blue-400 truncate">ID: {extractPlaylistId(val) || 'â€”'}</div>
+                          <button
+                            onClick={() => setActiveIndex(i)}
+                            className={'ml-2 px-2 py-1 rounded-lg border text-xs transition ' + (activeIndex === i ? 'bg-blue-100 text-blue-900 border-blue-100' : 'bg-blue-900 border-blue-800 hover:bg-blue-800')}
+                          >
+                            {activeIndex === i ? 'Active' : 'Make Active'}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
