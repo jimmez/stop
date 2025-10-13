@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>V32 Stopwatch â€“ YouTube Playlist Timer</title>
+  <title>V33 Stopwatch â€“ YouTube Playlist Timer</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     html, body, #root { height: 100%; }
@@ -143,6 +143,8 @@
       100% { opacity: 0; }
     }
 
+      @keyframes pingFast { 0% { opacity: 0.0; } 10% { opacity: 0.9; } 100% { opacity: 0.0; } }
+    .animate-ping-fast { animation: pingFast 500ms ease-out 1; }
   </style>
 </head>
 <body class="text-blue-200">
@@ -206,7 +208,7 @@
       let ss = totalSec % 60;
       if (mode === SEC_MODES.OFF) return pad2(mm);
       if (mode === SEC_MODES.FIRST_MIN) return ms < 60000 ? (pad2(mm)+':'+pad2(ss)) : pad2(mm);
-      if (mode === SEC_MODES.EVERY_10S) { ss = Math.floor(ss/10)*10; return pad2(mm)+':'+pad2(ss); }
+      if (mode === SEC_MODES.EVERY_10S) { if (ms < 120000) return pad2(mm)+':'+pad2(ss); ss = Math.floor(ss/10)*10; return pad2(mm)+':'+pad2(ss); }
       return pad2(mm)+':'+pad2(ss);
     }
 
@@ -250,12 +252,103 @@
       const [slotBannerVisible, setSlotBannerVisible] = useState(false);
       const slotBannerTimerRef = useRef(null);
       const [jimmyVisible, setJimmyVisible] = useState(false);
+      const [flashOnReset, setFlashOnReset] = useState(false);
+      const [torchOnReset, setTorchOnReset] = useState(false);
+      const [flashActive, setFlashActive] = useState(false);
+      const triggerFlash = useCallback(() => { setFlashActive(true); setTimeout(() => setFlashActive(false), 500); }, []);
+      const streamRef = useRef(null);
+      const triggerTorchFlash = async () => {
+        try {
+          if (!navigator.mediaDevices?.getUserMedia) return;
+          if (!streamRef.current) {
+            streamRef.current = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+          }
+          const track = streamRef.current.getVideoTracks()[0];
+          const caps = track.getCapabilities?.() || {};
+          if (!('torch' in caps)) return;
+          await track.applyConstraints({ advanced: [{ torch: true }] });
+          setTimeout(async () => { try { await track.applyConstraints({ advanced: [{ torch: false }] }); } catch(_) {} }, 300);
+        } catch(_) {}
+      };
+
+      // Loop mode
+      const [loopOn, setLoopOn] = useState(false);
+      const [loopSecs, setLoopSecs] = useState(20);
+      const [maxLoops, setMaxLoops] = useState(100);
+      const [loopCount, setLoopCount] = useState(0);
+      const nextLoopAtRef = useRef(null);
+      const initLoopThresholds = useCallback((startMs=0) => {
+        if (!loopOn) { nextLoopAtRef.current = null; return; }
+        const interval = Math.max(1, loopSecs) * 1000;
+        nextLoopAtRef.current = startMs + interval;
+      }, [loopOn, loopSecs]);
+      useEffect(() => { if (!running) return; initLoopThresholds(0); }, [loopOn, loopSecs]);
+
+      // Beep sound (Web Audio)
+      const [beepOn, setBeepOn] = useState(true);
+      const [beepVol, setBeepVol] = useState(0.5);
+      const [beepPitch, setBeepPitch] = useState(880);
+      const [beepType, setBeepType] = useState('short');
+      const [beepVolOpen, setBeepVolOpen] = useState(false);
+      const beepVolTimerRef = useRef(null);
+      const audioCtxRef = useRef(null);
+      const ensureAudio = () => { if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)(); return audioCtxRef.current; };
+      const playBeep = useCallback((type='short') => {
+        if (!beepOn) return;
+        try {
+          const ctx = ensureAudio();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = beepPitch;
+          gain.gain.value = 0.0001;
+          osc.connect(gain).connect(ctx.destination);
+          const now = ctx.currentTime;
+          const dur = type === 'long' ? 0.35 : 0.12;
+          gain.gain.setValueAtTime(0.0001, now);
+          gain.gain.linearRampToValueAtTime(beepVol, now + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+          osc.start(now);
+          osc.stop(now + dur + 0.02);
+        } catch(_) {}
+      }, [beepOn, beepVol, beepPitch]);
+      const toggleBeep = useCallback((e) => { e?.stopPropagation?.(); setBeepOn(v=>!v); }, []);
+      const onBeepPress = useCallback((e) => { e?.stopPropagation?.(); beepVolTimerRef.current = setTimeout(() => setBeepVolOpen(true), 450); }, []);
+      const onBeepRelease = useCallback((e) => { e?.stopPropagation?.(); if (beepVolTimerRef.current) { clearTimeout(beepVolTimerRef.current); beepVolTimerRef.current = null; } setTimeout(() => setBeepVolOpen(false), 1200); }, []);
+
+      // YouTube sound controls
+      const [ytMuted, setYtMuted] = useState(false);
+      const [ytVol, setYtVol] = useState(100);
+      const [ytVolOpen, setYtVolOpen] = useState(false);
+      const ytVolTimerRef = useRef(null);
+      const toggleYtMute = useCallback((e) => {
+        e?.stopPropagation?.();
+        setYtMuted(v => {
+          const nv = !v;
+          try { if (nv) playerRef.current?.mute?.(); else { playerRef.current?.unMute?.(); playerRef.current?.setVolume?.(ytVol); } } catch(_) {}
+          return nv;
+        });
+      }, [ytVol]);
+      const onYtPress = useCallback((e) => { e?.stopPropagation?.(); ytVolTimerRef.current = setTimeout(() => setYtVolOpen(true), 450); }, []);
+      const onYtRelease = useCallback((e) => { e?.stopPropagation?.(); if (ytVolTimerRef.current) { clearTimeout(ytVolTimerRef.current); ytVolTimerRef.current = null; } setTimeout(() => setYtVolOpen(false), 1200); }, []);
+      useEffect(() => { try { playerRef.current?.setVolume?.(ytVol); } catch(_) {} }, [ytVol]);
+
       const jimmyTimerRef = useRef(null);
 
       // Reference to the stopwatch digits for sizing
       const digitsRef = useRef(null);
 
       const [locked, setLocked] = useState(false); // lock mode (from v20)
+      // Auto-fullscreen on Android only
+      useEffect(() => {
+        const ua = (navigator.userAgent || '').toLowerCase();
+        if (ua.includes('android')) {
+          const de = document.documentElement;
+          const req = de.requestFullscreen || de.webkitRequestFullscreen || de.mozRequestFullScreen || de.msRequestFullscreen;
+          if (req) { try { req.call(de, { navigationUI: 'hide' }); } catch(_) { try { req.call(de); } catch(_) {} } }
+        }
+      }, []);
+
 
       // Pulse indicator only in 'Every 10s' mode while running
       const showPulse = running && !paused && secondsMode === SEC_MODES.EVERY_10S;
@@ -355,6 +448,16 @@
             if (typeof p.flowSizeVW === 'number') setFlowSizeVW(p.flowSizeVW);
             if (Object.values(SEC_MODES).includes(p.secondsMode)) setSecondsMode(p.secondsMode);
             if (typeof p.bgIndex === 'number') setBgIndex(p.bgIndex % BG_CYCLE.length);
+            if (typeof p.beepOn === 'boolean') setBeepOn(p.beepOn);
+            if (typeof p.beepVol === 'number') setBeepVol(p.beepVol);
+            if (typeof p.beepPitch === 'number') setBeepPitch(p.beepPitch);
+            if (typeof p.loopSecs === 'number') setLoopSecs(p.loopSecs);
+            if (typeof p.maxLoops === 'number') setMaxLoops(p.maxLoops);
+            if (typeof p.loopOn === 'boolean') setLoopOn(p.loopOn);
+            if (typeof p.flashOnReset === 'boolean') setFlashOnReset(p.flashOnReset);
+            if (typeof p.torchOnReset === 'boolean') setTorchOnReset(p.torchOnReset);
+            if (typeof p.ytMuted === 'boolean') setYtMuted(p.ytMuted);
+            if (typeof p.ytVol === 'number') setYtVol(p.ytVol);
             if (typeof p.flowWidthVW === 'number') setFlowWidthVW(p.flowWidthVW);
             if (typeof p.flowHeightVW === 'number') setFlowHeightVW(p.flowHeightVW);
             if (typeof p.flowBoost === 'number') setFlowBoost(p.flowBoost);
@@ -364,7 +467,7 @@
         } catch(_) {}
       }, []);
 
-      useEffect(() => { localStorage.setItem(LS_KEY, JSON.stringify({ playlistSlots, playlistNames, activeIndex, musicLenMs, mode, secondsMode, bgIndex, flowColor, flowMin, flowMax, flowDuration, flowWidthVW, flowHeightVW, flowBoost })); }, [playlistSlots, playlistNames, activeIndex, musicLenMs, mode, secondsMode, bgIndex, flowColor, flowMin, flowMax, flowDuration, flowWidthVW, flowHeightVW, flowBoost]);
+      useEffect(() => { localStorage.setItem(LS_KEY, JSON.stringify({ playlistSlots, playlistNames, activeIndex, musicLenMs, mode, secondsMode, bgIndex, flowColor, flowMin, flowMax, flowDuration, flowWidthVW, flowHeightVW, flowBoost, beepOn, beepVol, beepPitch, loopSecs, maxLoops, loopOn, flashOnReset, torchOnReset, ytMuted, ytVol })); }, [playlistSlots, playlistNames, activeIndex, musicLenMs, mode, secondsMode, bgIndex, flowColor, flowMin, flowMax, flowDuration, flowWidthVW, flowHeightVW, flowBoost, beepOn, beepVol, beepPitch, loopSecs, maxLoops, loopOn, flashOnReset, torchOnReset, ytMuted, ytVol]);
 
       const activePlaylistId = useMemo(() => extractPlaylistId(playlistSlots[activeIndex] || ''), [playlistSlots, activeIndex]);
       const activePlaylistName = useMemo(() => (playlistNames[activeIndex] || ''), [playlistNames, activeIndex]);
@@ -431,6 +534,23 @@
         if (startTimeRef.current == null) startTimeRef.current = now - elapsed;
         const newElapsed = now - startTimeRef.current;
         setElapsed(newElapsed);
+        // Loop handling
+        if (loopOn && nextLoopAtRef.current != null && newElapsed >= nextLoopAtRef.current) {
+          setLoopCount(c => {
+            const nc = c + 1;
+            // At limit, stop
+            if (nc >= maxLoops) {
+              setRunning(false); setPaused(true); setControlsVisible(true);
+              return nc;
+            } else {
+              startTimeRef.current = performance.now(); setElapsed(0);
+              ensureLoadedAndPlay();
+              nextLoopAtRef.current = 1000 * Math.max(1, loopSecs);
+              return nc;
+            }
+          });
+          return;
+        }
         rafRef.current = requestAnimationFrame(tick);
       }, [elapsed, running, paused]);
       useEffect(() => { if (running && !paused) { rafRef.current = requestAnimationFrame(tick); return () => cancelAnimationFrame(rafRef.current); } return () => {}; }, [running, paused, tick]);
@@ -460,19 +580,27 @@
 
       const startStopwatchAndMusic = useCallback(() => {
         setRunning(true); setPaused(false);
+        playBeep('short');
+        initLoopThresholds(0);
+        setLoopCount(0);
         startTimeRef.current = performance.now(); setElapsed(0);
+        playBeep('short');
+        initLoopThresholds(0);
         ensureLoadedAndPlay();
         setBgIndex((i) => (i + 1) % BG_CYCLE.length);
         showSlotBanner(10000); showJimmy();
-        if (!pinned) setControlsVisible(false);
+        if (!pinned) { setControlsVisible(true); if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current); controlsTimerRef.current = setTimeout(() => setControlsVisible(false), 60000); }
       }, [ensureLoadedAndPlay, pinned, showSlotBanner, showJimmy]);
       const resetStopwatchAndMusic = useCallback(() => {
         if (!running) { startStopwatchAndMusic(); return; }
         startTimeRef.current = performance.now(); setElapsed(0);
+        playBeep('short');
+        initLoopThresholds(0);
         ensureLoadedAndPlay();
         setBgIndex((i) => (i + 1) % BG_CYCLE.length);
         showSlotBanner(10000); showJimmy();
-      }, [running, startStopwatchAndMusic, ensureLoadedAndPlay, showSlotBanner, showJimmy]);
+        if (!pinned) { setControlsVisible(true); if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current); controlsTimerRef.current = setTimeout(() => setControlsVisible(false), 60000); }
+      }, [running, startStopwatchAndMusic, ensureLoadedAndPlay, showSlotBanner, showJimmy, pinned]);
 
       const handleGlobalTap = useCallback(() => { if (locked) return; resetStopwatchAndMusic(); }, [resetStopwatchAndMusic, locked]);
       const handlePauseToggle = useCallback((e) => {
@@ -525,6 +653,16 @@
             if (typeof p.flowDuration === 'number') setFlowDuration(p.flowDuration);
             if (typeof p.flowSizeVW === 'number') setFlowSizeVW(p.flowSizeVW);
             if (typeof p.bgIndex === 'number') setBgIndex(p.bgIndex % BG_CYCLE.length);
+            if (typeof p.beepOn === 'boolean') setBeepOn(p.beepOn);
+            if (typeof p.beepVol === 'number') setBeepVol(p.beepVol);
+            if (typeof p.beepPitch === 'number') setBeepPitch(p.beepPitch);
+            if (typeof p.loopSecs === 'number') setLoopSecs(p.loopSecs);
+            if (typeof p.maxLoops === 'number') setMaxLoops(p.maxLoops);
+            if (typeof p.loopOn === 'boolean') setLoopOn(p.loopOn);
+            if (typeof p.flashOnReset === 'boolean') setFlashOnReset(p.flashOnReset);
+            if (typeof p.torchOnReset === 'boolean') setTorchOnReset(p.torchOnReset);
+            if (typeof p.ytMuted === 'boolean') setYtMuted(p.ytMuted);
+            if (typeof p.ytVol === 'number') setYtVol(p.ytVol);
             if (typeof p.flowWidthVW === 'number') setFlowWidthVW(p.flowWidthVW);
             if (typeof p.flowHeightVW === 'number') setFlowHeightVW(p.flowHeightVW);
             if (typeof p.flowBoost === 'number') setFlowBoost(p.flowBoost);
@@ -544,6 +682,7 @@
 
           {/* TOUCH BLOCKER overlay when locked */}
           {locked && <div className="fixed inset-0 z-40" />}
+          {flashActive && <div className="fixed inset-0 z-40 bg-white/70 animate-ping-fast pointer-events-none" />}
 
           {/* Subtle pulse indicator when in Every 10s mode and running */}
           {showPulse && (
@@ -567,6 +706,20 @@
 
 
           <header className="sticky top-0 z-30 w-full bg-black/10 backdrop-blur border-b border-blue-900">
+            {beepVolOpen && (
+              <div className="absolute left-4 top-14 z-50 bg-black/70 border border-purple-900 rounded-xl px-3 py-2">
+                <div className="text-xs mb-1">Beep volume: {Math.round(beepVol*100)}</div>
+                <input type="range" min="0" max="1" step="0.01" value={beepVol} onChange={(e)=>setBeepVol(parseFloat(e.target.value))} className="w-52" />
+              </div>
+            )}
+
+            {ytVolOpen && (
+              <div className="absolute right-4 top-14 z-50 bg-black/70 border border-green-900 rounded-xl px-3 py-2">
+                <div className="text-xs mb-1">YT volume: {ytVol}</div>
+                <input type="range" min="0" max="100" value={ytVol} onChange={(e)=>setYtVol(parseInt(e.target.value,10))} className="w-52" />
+              </div>
+            )}
+
             <div className="px-4 py-2 flex flex-wrap items-center gap-2">
               <div className="mr-2 font-extrabold flex-shrink-0" style={{ color: '#93C5FD' }}>
                 <span className="text-4xl md:text-6xl leading-none">{clock}</span>
@@ -587,10 +740,11 @@
                       {Math.round(ms/1000)}s
                     </button>
                   ))}
-                  <button onClick={()=>!locked && setLengthsOpen(true)} className="px-3 py-2 rounded-xl bg-blue-900/70 hover:bg-blue-800">Moreâ€¦</button>
+                  <button onClick={()=>!locked && setLengthsOpen(true)} className="px-3 py-2 rounded-xl bg-blue-900/70 hover:bg-blue-800">More</button>
+                  <button onMouseDown={onBeepPress} onMouseUp={onBeepRelease} onTouchStart={onBeepPress} onTouchEnd={onBeepRelease} onClick={toggleBeep} className="px-3 py-2 rounded-xl bg-purple-700 hover:bg-purple-600">{beepOn ? "Beep On" : "Beep Off"}</button>
                 </div>
                 {nowPlaying && (
-                  <div className="ml-2 text-xs md:text-sm text-blue-300 truncate max-w-[30vw]" title={nowPlaying}>
+                  <div className="ml-2 text-xs md:text-sm text-blue-300 truncate max-w-[70vw]" title={nowPlaying}>
                     Now playing: <span className="text-blue-100">{nowPlaying}</span>
                   </div>
                 )}
@@ -598,8 +752,9 @@
                 <div className="flex items-center gap-2">
                   <button onClick={(e)=>{ if (locked) return; setSettingsOpen(true); showControls(13000); }} className="px-3 py-2 rounded-xl bg-orange-600 hover:bg-orange-500 text-white">Settings</button>
                   <button onClick={handlePauseToggle} className="px-3 py-2 rounded-xl bg-blue-900/70 hover:bg-blue-800">{paused ? "Resume" : "Pause"}</button>
-                  <button onClick={stopMusicOnly} className="px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500">Stop Music</button>
-                  <FsButton isFs={isFs} onToggle={toggleFullscreen} />
+                  <button onMouseDown={onYtPress} onMouseUp={onYtRelease} onTouchStart={onYtPress} onTouchEnd={onYtRelease} onClick={toggleYtMute} className="px-3 py-2 rounded-xl bg-green-700 hover:bg-green-600">{ytMuted ? "YT Off" : "YT On"}</button>
+                  <button onClick={stopMusicOnly} className="px-2 py-2 text-sm rounded-xl bg-red-600 hover:bg-red-500">Stop</button>
+                  <div className="flex flex-col items-center"><FsButton isFs={isFs} onToggle={toggleFullscreen} /><div className="text-[10px] mt-1 text-blue-300">{loopOn ? (`reps: ${loopCount}`) : ''}</div></div>
                 </div>
               </div>
             </div>
@@ -621,13 +776,14 @@
                   <button onClick={() => !locked && (setPinned(v => !v), !pinned && showControls(13000))} className={"px-3 py-2 rounded-xl border " + (pinned ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900/70 border-blue-800 hover:bg-blue-800")}>
                     {pinned ? "Unpin controls" : "Pin controls"}
                   </button>
+                  <button onClick={() => setLoopOn(v=>!v)} className={"px-3 py-2 rounded-xl border " + (loopOn ? "bg-green-200 text-green-900 border-green-200" : "bg-blue-900/70 border-blue-800 hover:bg-blue-800")}>{loopOn ? "Loop: On" : "Loop: Off"}</button>
                 </div>
                 <div className="flex flex-wrap items-center justify-center gap-2">
                   <button onClick={() => !locked && setSecondsMode(SEC_MODES.ON)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.ON ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900/70 border-blue-800 hover:bg-blue-800")}>Show seconds</button>
                   <button onClick={() => !locked && setSecondsMode(SEC_MODES.OFF)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.OFF ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900/70 border-blue-800 hover:bg-blue-800")}>Hide seconds</button>
                   <button onClick={() => !locked && setSecondsMode(SEC_MODES.FIRST_MIN)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.FIRST_MIN ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900/70 border-blue-800 hover:bg-blue-800")}>First minute</button>
                   <button onClick={() => !locked && setSecondsMode(SEC_MODES.EVERY_10S)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.EVERY_10S ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900/70 border-blue-800 hover:bg-blue-800")}>Every 10s</button>
-                  <FsButton isFs={isFs} onToggle={toggleFullscreen} />
+                  <div className="flex flex-col items-center"><FsButton isFs={isFs} onToggle={toggleFullscreen} /><div className="text-[10px] mt-1 text-blue-300">{loopOn ? (`reps: ${loopCount}`) : ''}</div></div>
                 </div>
               </div>
             </div>
@@ -642,7 +798,7 @@
               </div>
             </div>
 
-            <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V32</div>
+            <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V33</div>
           </main>
 
           {settingsOpen && (
@@ -672,6 +828,23 @@
                       </div>
                     ))}
                   </div>
+                                  <div className="mt-6 pt-4 border-t border-blue-900">
+                    <h3 className="font-semibold mb-2">Beep Settings</h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                      <label className="text-blue-200">Beep enabled</label>
+                      <input type="checkbox" checked={beepOn} onChange={(e)=>setBeepOn(e.target.checked)} />
+                      <label className="text-blue-200">Beep volume</label>
+                      <input type="range" min="0" max="1" step="0.01" value={beepVol} onChange={(e)=>setBeepVol(parseFloat(e.target.value))} />
+                      <label className="text-blue-200">Beep type</label>
+                      <select value={beepType} onChange={(e)=>setBeepType(e.target.value)} className="bg-blue-900/60 border border-blue-800 rounded px-2 py-1">
+                        <option value="short">Short</option>
+                        <option value="long">Long</option>
+                      </select>
+                      <label className="text-blue-200">Beep pitch (Hz)</label>
+                      <input type="number" min="220" max="2000" step="10" value={beepPitch} onChange={(e)=>setBeepPitch(parseInt(e.target.value,10)||880)} className="bg-blue-900/60 border border-blue-800 rounded px-2 py-1" />
+                    </div>
+                  </div>
+
                 </div>
               </div>
             </div>
@@ -722,7 +895,39 @@
                   </div>
 
                 </div>
-                  <p className="text-xs text-blue-400">Expansion starts at multiples of the selected cycle (e.g., :00, :20, :40...) and contraction at mid-cycles (e.g., :10, :30, :50...) based on the stopwatch time.</p>
+                  <p className="text-xs text-blue-400">Expansion starts at multiples of the selected cycle (e.g., :00, :20, :40...) and contraction at mid-cycles (e.g., :10, :30, :50...) based on the stopwatch time.</p>                  <div className="mt-6 pt-4 border-t border-blue-900">
+                    <h3 className="font-semibold mb-2">Loop Settings</h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                      <label className="text-blue-200">Enable loop mode</label>
+                      <input type="checkbox" checked={loopOn} onChange={(e)=>setLoopOn(e.target.checked)} />
+                      <label className="text-blue-200">Loop interval (seconds)</label>
+                      <input type="number" min="1" max="600" step="1" value={loopSecs} onChange={(e)=>setLoopSecs(Math.max(1, parseInt(e.target.value||'20',10)))} className="bg-blue-900/60 border border-blue-800 rounded px-2 py-1" />
+                      <label className="text-blue-200">Max loops per session</label>
+                      <input type="number" min="1" max="10000" step="1" value={maxLoops} onChange={(e)=>setMaxLoops(Math.max(1, parseInt(e.target.value||'100',10)))} className="bg-blue-900/60 border border-blue-800 rounded px-2 py-1" />
+                      <label className="text-blue-200">Flash screen at reset</label>
+                      <input type="checkbox" checked={flashOnReset} onChange={(e)=>setFlashOnReset(e.target.checked)} />
+                      <label className="text-blue-200">Use camera light (torch) if possible</label>
+                      <input type="checkbox" checked={torchOnReset} onChange={(e)=>setTorchOnReset(e.target.checked)} />
+                    </div>
+                  </div>
+
+                                  <div className="mt-6 pt-4 border-t border-blue-900">
+                    <h3 className="font-semibold mb-2">Beep Settings</h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                      <label className="text-blue-200">Beep enabled</label>
+                      <input type="checkbox" checked={beepOn} onChange={(e)=>setBeepOn(e.target.checked)} />
+                      <label className="text-blue-200">Beep volume</label>
+                      <input type="range" min="0" max="1" step="0.01" value={beepVol} onChange={(e)=>setBeepVol(parseFloat(e.target.value))} />
+                      <label className="text-blue-200">Beep type</label>
+                      <select value={beepType} onChange={(e)=>setBeepType(e.target.value)} className="bg-blue-900/60 border border-blue-800 rounded px-2 py-1">
+                        <option value="short">Short</option>
+                        <option value="long">Long</option>
+                      </select>
+                      <label className="text-blue-200">Beep pitch (Hz)</label>
+                      <input type="number" min="220" max="2000" step="10" value={beepPitch} onChange={(e)=>setBeepPitch(parseInt(e.target.value,10)||880)} className="bg-blue-900/60 border border-blue-800 rounded px-2 py-1" />
+                    </div>
+                  </div>
+
                 </div>
               </div>
             </div>
@@ -742,6 +947,23 @@
                       {p.label}
                     </button>
                   ))}
+                                  <div className="mt-6 pt-4 border-t border-blue-900">
+                    <h3 className="font-semibold mb-2">Beep Settings</h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                      <label className="text-blue-200">Beep enabled</label>
+                      <input type="checkbox" checked={beepOn} onChange={(e)=>setBeepOn(e.target.checked)} />
+                      <label className="text-blue-200">Beep volume</label>
+                      <input type="range" min="0" max="1" step="0.01" value={beepVol} onChange={(e)=>setBeepVol(parseFloat(e.target.value))} />
+                      <label className="text-blue-200">Beep type</label>
+                      <select value={beepType} onChange={(e)=>setBeepType(e.target.value)} className="bg-blue-900/60 border border-blue-800 rounded px-2 py-1">
+                        <option value="short">Short</option>
+                        <option value="long">Long</option>
+                      </select>
+                      <label className="text-blue-200">Beep pitch (Hz)</label>
+                      <input type="number" min="220" max="2000" step="10" value={beepPitch} onChange={(e)=>setBeepPitch(parseInt(e.target.value,10)||880)} className="bg-blue-900/60 border border-blue-800 rounded px-2 py-1" />
+                    </div>
+                  </div>
+
                 </div>
               </div>
             </div>
