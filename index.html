@@ -3,11 +3,32 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>V22 Stopwatch â€“ YouTube Playlist Timer</title>
+  <title>V23 Stopwatch â€“ YouTube Playlist Timer</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     html, body, #root { height: 100%; }
     body { font-family: Helvetica, Arial, sans-serif; }
+  
+    /* Subtle pulsing glow for 'Every 10s' mode */
+    .pulse-glow {
+      position: fixed;
+      right: 8%;
+      bottom: 22%;
+      width: 44px;
+      height: 44px;
+      border-radius: 9999px;
+      background: radial-gradient(circle, rgba(255,120,120,0.55) 0%, rgba(255,120,120,0.0) 70%);
+      filter: blur(6px);
+      opacity: 0.22;
+      animation: pulseGlow 1s ease-in-out infinite;
+      pointer-events: none;
+      z-index: 10;
+    }
+    @keyframes pulseGlow {
+      0%, 100% { transform: scale(1);   opacity: 0.18; }
+      50%      { transform: scale(1.25); opacity: 0.36; }
+    }
+
   </style>
 </head>
 <body class="text-blue-200">
@@ -118,6 +139,9 @@
       const jimmyTimerRef = useRef(null);
 
       const [locked, setLocked] = useState(false); // lock mode (from v20)
+
+      // Pulse indicator only in 'Every 10s' mode while running
+      const showPulse = running && !paused && secondsMode === SEC_MODES.EVERY_10S;
       // Fullscreen support (Android + Chrome on PC)
       const [isFs, setIsFs] = useState(false);
       const enterFullscreen = useCallback(() => {
@@ -248,10 +272,11 @@
         slotBannerTimerRef.current = setTimeout(() => setSlotBannerVisible(false), ms);
       }, []);
       const hideControls = useCallback(() => {
+        if (pinned) return; // keep visible while pinned
         if (controlsTimerRef.current) { clearTimeout(controlsTimerRef.current); controlsTimerRef.current = null; }
         setControlsVisible(false);
         showSlotBanner(10000);
-      }, [showSlotBanner]);
+      }, [showSlotBanner, pinned]);
 
       const showJimmy = useCallback(() => {
         setJimmyVisible(true);
@@ -336,6 +361,10 @@
           {/* TOUCH BLOCKER overlay when locked */}
           {locked && <div className="fixed inset-0 z-40" />}
 
+          {/* Subtle pulse indicator when in Every 10s mode and running */}
+          {showPulse && <div className="pulse-glow" />}
+
+
           <header className="sticky top-0 z-30 w-full bg-black/10 backdrop-blur border-b border-blue-900">
             <div className="px-4 py-2 flex flex-wrap items-center gap-2">
               <div className="mr-2 font-extrabold flex-shrink-0" style={{ color: '#93C5FD' }}>
@@ -412,7 +441,7 @@
               </div>
             </div>
 
-            <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V22</div>
+            <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V23</div>
           </main>
 
           {settingsOpen && (
@@ -484,3 +513,4 @@
   </script>
 </body>
 </html>
+
