@@ -3,30 +3,144 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>V23 Stopwatch â€“ YouTube Playlist Timer</title>
+  <title>V32 Stopwatch â€“ YouTube Playlist Timer</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     html, body, #root { height: 100%; }
     body { font-family: Helvetica, Arial, sans-serif; }
   
     /* Subtle pulsing glow for 'Every 10s' mode */
-    .pulse-glow {
+    
+    /* Subtle glowing ring around the stopwatch */
+    
+    /* Subtle glowing ring around the stopwatch with tunable flow */
+    
+    /* Smooth oval glow blob around the stopwatch (layered + brightness adjustable) */
+    .pulse-ring {
       position: fixed;
-      right: 8%;
-      bottom: 22%;
-      width: 44px;
-      height: 44px;
-      border-radius: 9999px;
-      background: radial-gradient(circle, rgba(255,120,120,0.55) 0%, rgba(255,120,120,0.0) 70%);
-      filter: blur(6px);
-      opacity: 0.22;
-      animation: pulseGlow 1s ease-in-out infinite;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: var(--blob-w, 60vw);
+      height: var(--blob-h, 40vw); /* non-square => oval */
+      border-radius: 9999px;       /* ellipse */
+      background:
+        radial-gradient(ellipse at 50% 50%,
+          rgb(var(--pulse-rgb, 255 120 120) / 0.18) 0%,
+          rgb(var(--pulse-rgb, 255 120 120) / 0.12) 45%,
+          rgb(var(--pulse-rgb, 255 120 120) / 0.06) 65%,
+          rgb(var(--pulse-rgb, 255 120 120) / 0.00) 80%);
+      box-shadow:
+        0 0 120px rgb(var(--pulse-rgb, 255 120 120) / 0.12),
+        inset 0 0 220px rgb(var(--pulse-rgb, 255 160 160) / 0.10);
+      animation: ringPulse var(--pulse-duration, 10s) ease-in-out infinite;
+      filter: blur(10px) brightness(var(--boost, 1));
       pointer-events: none;
       z-index: 10;
     }
-    @keyframes pulseGlow {
-      0%, 100% { transform: scale(1);   opacity: 0.18; }
+    .pulse-ring::before,
+    .pulse-ring::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background:
+        radial-gradient(ellipse at 50% 50%,
+          rgb(var(--pulse-rgb, 255 120 120) / 0.12) 0%,
+          rgb(var(--pulse-rgb, 255 120 120) / 0.08) 50%,
+          rgb(var(--pulse-rgb, 255 120 120) / 0.00) 80%);
+      filter: blur(18px);
+      pointer-events: none;
+    }
+    .pulse-ring::before {
+      transform: scale(1.35);
+      opacity: 0.35;
+    }
+    .pulse-ring::after {
+      transform: scale(1.8);
+      opacity: 0.22;
+    }
+    @keyframes ringPulse {
+      0%   { transform: translate(-50%, -50%) scale(0.96); opacity: var(--pulse-min, 0.22); }
+      25%  { transform: translate(-50%, -50%) scale(1.02); opacity: calc((var(--pulse-min, 0.22) + var(--pulse-max, 0.50))*0.5); }
+      50%  { transform: translate(-50%, -50%) scale(1.08); opacity: var(--pulse-max, 0.50); } /* outward end */
+      75%  { transform: translate(-50%, -50%) scale(1.02); opacity: calc((var(--pulse-min, 0.22) + var(--pulse-max, 0.50))*0.5); }
+      100% { transform: translate(-50%, -50%) scale(0.96); opacity: var(--pulse-min, 0.22); } /* inward end */
+    }
+
+      25%  { transform: translate(-50%, -50%) scale(1.02); opacity: calc((var(--pulse-min, 0.22) + var(--pulse-max, 0.50))*0.5); }
+      50%  { transform: translate(-50%, -50%) scale(1.08); opacity: var(--pulse-max, 0.50); } /* outward end */
+      75%  { transform: translate(-50%, -50%) scale(1.02); opacity: calc((var(--pulse-min, 0.22) + var(--pulse-max, 0.50))*0.5); }
+      100% { transform: translate(-50%, -50%) scale(0.96); opacity: var(--pulse-min, 0.22); } /* inward end */
+    }
+
+      25%  { transform: translate(-50%, -50%) scale(1.02); opacity: 0.32; }
+      50%  { transform: translate(-50%, -50%) scale(1.08); opacity: 0.50; }  /* end of outward pulse (5s) */
+      75%  { transform: translate(-50%, -50%) scale(1.02); opacity: 0.32; }
+      100% { transform: translate(-50%, -50%) scale(0.96); opacity: 0.22; }  /* completed inward pulse (another 5s) */
+    }
+    
+      50%      { transform: translate(-50%, -50%) scale(1.03); opacity: 0.42; }
+    }
+
       50%      { transform: scale(1.25); opacity: 0.36; }
+    }
+
+  
+    /* Startup signature graphic */
+    .signature-wrap {
+      position: fixed;
+      left: 6%;
+      top: 18%;
+      z-index: 30;
+      pointer-events: none;
+      opacity: 0.95;
+    }
+    .signature-text {
+      font-weight: 900;
+      font-style: italic;
+      letter-spacing: 0.06em;
+      font-size: clamp(20px, 3.8vw, 46px);
+      background: linear-gradient(90deg, rgba(255,255,255,0.95), rgba(255,200,200,0.95), rgba(255,255,255,0.95));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      text-shadow: 0 2px 18px rgba(255,120,120,0.25), 0 0 8px rgba(255,255,255,0.25);
+      transform: rotate(-2deg);
+      filter: drop-shadow(0 4px 24px rgba(255,120,120,0.15));
+      white-space: nowrap;
+    }
+    .signature-swoosh {
+      position: absolute;
+      left: -2%;
+      top: 60%;
+      width: 115%;
+      height: 22px;
+      background: radial-gradient(ellipse at center, rgba(255,140,140,0.35) 0%, rgba(255,140,140,0.12) 60%, rgba(255,140,140,0) 75%);
+      filter: blur(6px);
+      transform: rotate(-3deg);
+    }
+
+  
+    /* Plain startup signature (Times font), fades in/out within 5s */
+    .signature-plain {
+      position: fixed;
+      left: 16px;
+      top: 76px; /* just below header area */
+      font-family: "Times New Roman", Times, serif;
+      font-size: 0.875rem; /* similar to button text size */
+      color: rgba(255,255,255,0.85);
+      opacity: 0;
+      animation: sigFade 5s ease-in-out forwards;
+      pointer-events: none;
+      z-index: 25;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.25);
+    }
+    @keyframes sigFade {
+      0% { opacity: 0; }
+      15% { opacity: 1; }
+      85% { opacity: 1; }
+      100% { opacity: 0; }
     }
 
   </style>
@@ -138,10 +252,60 @@
       const [jimmyVisible, setJimmyVisible] = useState(false);
       const jimmyTimerRef = useRef(null);
 
+      // Reference to the stopwatch digits for sizing
+      const digitsRef = useRef(null);
+
       const [locked, setLocked] = useState(false); // lock mode (from v20)
 
       // Pulse indicator only in 'Every 10s' mode while running
       const showPulse = running && !paused && secondsMode === SEC_MODES.EVERY_10S;
+
+      // Flow Settings state (color/brightness/rate/size + panel)
+      const [flowOpen, setFlowOpen] = useState(false);
+      const [flowColor, setFlowColor] = useState('#ff7878');   // hex color
+      const [flowMin, setFlowMin] = useState(0.22);            // 0..1
+      const [flowMax, setFlowMax] = useState(0.50);            // 0..1
+      const [flowDuration, setFlowDuration] = useState(20);    // seconds for full out+in cycle (default)
+      const [flowSizeVW, setFlowSizeVW] = useState(70);        // ring size in vw
+
+      // Helpers to convert hex to "r g b" for CSS vars
+      const hexToRGB = useCallback((hex) => {
+        try {
+          const s = hex.replace('#','');
+          const v = s.length===3 ? s.split('').map(c=>c+c).join('') : s;
+          const r = parseInt(v.slice(0,2),16), g = parseInt(v.slice(2,4),16), b = parseInt(v.slice(4,6),16);
+          return `${r} ${g} ${b}`;
+        } catch { return '255 120 120'; }
+      }, []);
+      const flowRGB = useMemo(() => hexToRGB(flowColor), [flowColor, hexToRGB]);
+      // Compute an oval size that hugs the stopwatch digits (in vw units)
+      const fitToDigits = useCallback(() => {
+        try {
+          const el = digitsRef.current;
+          if (!el) return;
+          const rect = el.getBoundingClientRect();
+          const vw = (val) => (val / window.innerWidth) * 100;
+          const vh = (val) => (val / window.innerHeight) * 100; // not used, but here if needed
+          // Add some breathing room around the digits
+          const targetW = Math.max(5, Math.min(90, vw(rect.width) * 1.08));
+          const targetH = Math.max(5, Math.min(70, (rect.height / window.innerWidth) * 100 * 1.28));
+          setFlowWidthVW(parseFloat(targetW.toFixed(1)));
+          setFlowHeightVW(parseFloat(targetH.toFixed(1)));
+        } catch(_) {}
+      }, []);
+
+      const [flowWidthVW, setFlowWidthVW] = useState(60);   // blob width (vw)
+      const [flowHeightVW, setFlowHeightVW] = useState(40); // blob height (vw)
+      const [flowBoost, setFlowBoost] = useState(1.0);      // 0.5 .. 3.0 brightness boost
+
+
+
+      // Startup signature visible for first 5 seconds
+      const [signatureVisible, setSignatureVisible] = useState(true);
+      useEffect(() => {
+        const t = setTimeout(() => setSignatureVisible(false), 5000);
+        return () => clearTimeout(t);
+      }, []);
       // Fullscreen support (Android + Chrome on PC)
       const [isFs, setIsFs] = useState(false);
       const enterFullscreen = useCallback(() => {
@@ -184,13 +348,23 @@
             if (typeof p.activeIndex === 'number') setActiveIndex(clamp(p.activeIndex, 0, 19));
             if (typeof p.musicLenMs === 'number' || p.musicLenMs === null) setMusicLenMs(p.musicLenMs);
             if (MODES.includes(p.mode)) setMode(p.mode);
+            if (p.flowColor) setFlowColor(p.flowColor);
+            if (typeof p.flowMin === 'number') setFlowMin(p.flowMin);
+            if (typeof p.flowMax === 'number') setFlowMax(p.flowMax);
+            if (typeof p.flowDuration === 'number') setFlowDuration(p.flowDuration);
+            if (typeof p.flowSizeVW === 'number') setFlowSizeVW(p.flowSizeVW);
             if (Object.values(SEC_MODES).includes(p.secondsMode)) setSecondsMode(p.secondsMode);
             if (typeof p.bgIndex === 'number') setBgIndex(p.bgIndex % BG_CYCLE.length);
+            if (typeof p.flowWidthVW === 'number') setFlowWidthVW(p.flowWidthVW);
+            if (typeof p.flowHeightVW === 'number') setFlowHeightVW(p.flowHeightVW);
+            if (typeof p.flowBoost === 'number') setFlowBoost(p.flowBoost);
+            if (typeof p.flowSizeVW === 'number' && (p.flowWidthVW == null)) setFlowWidthVW(p.flowSizeVW);
+
           }
         } catch(_) {}
       }, []);
 
-      useEffect(() => { localStorage.setItem(LS_KEY, JSON.stringify({ playlistSlots, playlistNames, activeIndex, musicLenMs, mode, secondsMode, bgIndex })); }, [playlistSlots, playlistNames, activeIndex, musicLenMs, mode, secondsMode, bgIndex]);
+      useEffect(() => { localStorage.setItem(LS_KEY, JSON.stringify({ playlistSlots, playlistNames, activeIndex, musicLenMs, mode, secondsMode, bgIndex, flowColor, flowMin, flowMax, flowDuration, flowWidthVW, flowHeightVW, flowBoost })); }, [playlistSlots, playlistNames, activeIndex, musicLenMs, mode, secondsMode, bgIndex, flowColor, flowMin, flowMax, flowDuration, flowWidthVW, flowHeightVW, flowBoost]);
 
       const activePlaylistId = useMemo(() => extractPlaylistId(playlistSlots[activeIndex] || ''), [playlistSlots, activeIndex]);
       const activePlaylistName = useMemo(() => (playlistNames[activeIndex] || ''), [playlistNames, activeIndex]);
@@ -345,7 +519,17 @@
             if (typeof p.musicLenMs === 'number' || p.musicLenMs === null) setMusicLenMs(p.musicLenMs);
             if (Object.values(SEC_MODES).includes(p.secondsMode)) setSecondsMode(p.secondsMode);
             if (MODES.includes(p.mode)) setMode(p.mode);
+            if (p.flowColor) setFlowColor(p.flowColor);
+            if (typeof p.flowMin === 'number') setFlowMin(p.flowMin);
+            if (typeof p.flowMax === 'number') setFlowMax(p.flowMax);
+            if (typeof p.flowDuration === 'number') setFlowDuration(p.flowDuration);
+            if (typeof p.flowSizeVW === 'number') setFlowSizeVW(p.flowSizeVW);
             if (typeof p.bgIndex === 'number') setBgIndex(p.bgIndex % BG_CYCLE.length);
+            if (typeof p.flowWidthVW === 'number') setFlowWidthVW(p.flowWidthVW);
+            if (typeof p.flowHeightVW === 'number') setFlowHeightVW(p.flowHeightVW);
+            if (typeof p.flowBoost === 'number') setFlowBoost(p.flowBoost);
+            if (typeof p.flowSizeVW === 'number' && (p.flowWidthVW == null)) setFlowWidthVW(p.flowSizeVW);
+
           } catch { alert('Invalid settings file.'); } finally { e.target.value = ''; }
         };
         reader.readAsText(file);
@@ -362,7 +546,24 @@
           {locked && <div className="fixed inset-0 z-40" />}
 
           {/* Subtle pulse indicator when in Every 10s mode and running */}
-          {showPulse && <div className="pulse-glow" />}
+          {showPulse && (
+            <div
+              className="pulse-ring"
+              style={{
+                '--pulse-rgb': flowRGB,
+                '--pulse-min': flowMin,
+                '--pulse-max': flowMax,
+                '--pulse-duration': `${flowDuration}s`,
+                '--pulse-size': `${flowSizeVW}vw`,
+                animationDelay: `-${(elapsed % (flowDuration*1000))}ms`
+              }}
+            />
+          )}
+
+          {/* Startup signature (first 5 seconds) */}
+          {signatureVisible && (
+            <div className="signature-plain">Jimmy James - 13.10.2025</div>
+          )}
 
 
           <header className="sticky top-0 z-30 w-full bg-black/10 backdrop-blur border-b border-blue-900">
@@ -409,7 +610,7 @@
             <button onClick={(e) => { e.stopPropagation(); if (locked) return; if (controlsVisible) { setPinned(false); hideControls(); } else { showControls(13000); } }} className="fixed bottom-6 left-1/2 -translate-x-1/2 w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-500 shadow-lg active:scale-95 transition" title="Show/Hide controls"></button>
 
             <div className="grid place-items-center" style={{ marginTop: '25vh' }} onClick={(e) => { e.stopPropagation(); if (locked) return; resetStopwatchAndMusic(); }}>
-              <div className="text-[20vw] md:text-[12rem] leading-none font-extrabold drop-shadow" style={{ color: '#93C5FD', textShadow: '0 0 12px rgba(147,197,253,0.15)' }} aria-live="polite">
+              <div ref={digitsRef} className="text-[20vw] md:text-[12rem] leading-none font-extrabold drop-shadow" style={{ color: '#93C5FD', textShadow: '0 0 12px rgba(147,197,253,0.15)' }} aria-live="polite">
                 {formatDisplay(elapsed, secondsMode)}
               </div>
             </div>
@@ -441,7 +642,7 @@
               </div>
             </div>
 
-            <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V23</div>
+            <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V32</div>
           </main>
 
           {settingsOpen && (
@@ -452,6 +653,7 @@
                   <div className="flex gap-2">
                     <button onClick={(e) => { e.stopPropagation(); exportSettings(e); }} className="px-3 py-2 rounded-xl bg-blue-900/70 hover:bg-blue-800">Export JSON</button>
                     <button onClick={(e) => { e.stopPropagation(); importSettingsFromFile(e); }} className="px-3 py-2 rounded-xl bg-blue-900/70 hover:bg-blue-800">Import JSON</button>
+                    <button onClick={(e) => { e.stopPropagation(); setFlowOpen(true); }} className="px-3 py-2 rounded-xl bg-pink-600 hover:bg-pink-500 text-white">Flow Settings</button>
                     <button onClick={(e) => { e.stopPropagation(); setSettingsOpen(false); }} className="px-3 py-2 rounded-xl bg-blue-900/70 hover:bg-blue-800">Close</button>
                   </div>
                 </div>
@@ -474,6 +676,58 @@
               </div>
             </div>
           )}
+
+
+          {flowOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setFlowOpen(false)}>
+              <div className="w-full max-w-xl rounded-2xl bg-black/30 border border-pink-900 p-5 backdrop-blur" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-semibold">Flow Settings</h2>
+                  <button onClick={() => setFlowOpen(false)} className="px-3 py-2 rounded-xl bg-blue-900/70 hover:bg-blue-800">Close</button>
+                </div>
+                <div className="space-y-4 text-sm">
+                  <div className="flex items-center justify-between gap-4">
+                    <label className="text-blue-200">Color</label>
+                    <input type="color" value={flowColor} onChange={(e)=>setFlowColor(e.target.value)} className="w-10 h-10 rounded border border-blue-800 bg-blue-900/50" />
+                  </div>
+                  <div>
+                    <label className="block mb-1 text-blue-200">Brightness (min / max)</label>
+                    <div className="flex items-center gap-3">
+                      <input type="range" min="0" max="1" step="0.01" value={flowMin} onChange={(e)=>setFlowMin(parseFloat(e.target.value))} className="w-full" />
+                      <span className="w-12 text-right">{flowMin.toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center gap-3 mt-1">
+                      <input type="range" min="0" max="1" step="0.01" value={flowMax} onChange={(e)=>setFlowMax(parseFloat(e.target.value))} className="w-full" />
+                      <span className="w-12 text-right">{flowMax.toFixed(2)}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <label className="text-blue-200">Pulse cycle (seconds)</label>
+                    <input type="number" min="4" max="60" step="1" value={flowDuration} onChange={(e)=>setFlowDuration(Math.max(4, Math.min(60, parseInt(e.target.value||'10',10))))} className="w-20 rounded bg-blue-900/60 border border-blue-800 px-2 py-1" />
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <label className="text-blue-200">Blob width (vw)</label>
+                    <input type="range" min="5" max="90" step="1" value={flowWidthVW} onChange={(e)=>setFlowWidthVW(parseInt(e.target.value,10))} className="w-full" />
+                  
+                  <div className="flex items-center justify-between gap-4 mt-2">
+                    <label className="text-blue-200">Blob height (vw)</label>
+                    <input type="range" min="5" max="70" step="1" value={flowHeightVW} onChange={(e)=>setFlowHeightVW(parseInt(e.target.value,10))} className="w-full" />
+                  </div>
+                  <div className="flex items-center justify-between gap-4 mt-2">
+                    <button onClick={fitToDigits} className="px-3 py-2 rounded-xl bg-blue-900/70 hover:bg-blue-800">Fit to stopwatch</button>
+                  </div>
+                  <div className="flex items-center justify-between gap-4 mt-2">
+                    <label className="text-blue-200">Brightness boost</label>
+                    <input type="range" min="0.5" max="3" step="0.05" value={flowBoost} onChange={(e)=>setFlowBoost(parseFloat(e.target.value))} className="w-full" />
+                  </div>
+
+                </div>
+                  <p className="text-xs text-blue-400">Expansion starts at multiples of the selected cycle (e.g., :00, :20, :40...) and contraction at mid-cycles (e.g., :10, :30, :50...) based on the stopwatch time.</p>
+                </div>
+              </div>
+            </div>
+          )}
+
 
           {lengthsOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setLengthsOpen(false)}>
@@ -513,4 +767,3 @@
   </script>
 </body>
 </html>
-
