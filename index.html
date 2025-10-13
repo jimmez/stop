@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>V38 Stopwatch â€“ YouTube Playlist Timer</title>
+  <title>V39 Stopwatch â€“ YouTube Playlist Timer</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     html, body, #root { height: 100%; }
@@ -821,7 +821,7 @@
 
           {/* Loop info band under header */}
           {((extraSwVis==='always') || (extraSwVis==='loop3s' && ((loopOn && elapsed < 3000) || (!loopOn && running)))) && (
-            <div className="fixed left-0 right-0 z-40 px-4 py-2 pointer-events-none" style={{ top: "calc(env(safe-area-inset-top) + 56px)" }}>
+            <div className="px-4 pt-2">
               <div className="flex items-center justify-between">
                 {/* Total time on left */}
                 <div className="font-extrabold text-blue-200 drop-shadow" style={{ fontSize: '8vw' }}>
@@ -860,7 +860,7 @@
                   <button onClick={() => !locked && setSecondsMode(SEC_MODES.OFF)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.OFF ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900/70 border-blue-800 hover:bg-blue-800")}>Hide seconds</button>
                   <button onClick={() => !locked && setSecondsMode(SEC_MODES.FIRST_MIN)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.FIRST_MIN ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900/70 border-blue-800 hover:bg-blue-800")}>First minute</button>
                   <button onClick={() => !locked && setSecondsMode(SEC_MODES.EVERY_10S)} className={"px-3 py-2 rounded-xl border " + (secondsMode===SEC_MODES.EVERY_10S ? "bg-blue-100 text-blue-900 border-blue-100" : "bg-blue-900/70 border-blue-800 hover:bg-blue-800")}>Every 10s</button>
-                  <div className="flex flex-col items-center"><FsButton isFs={isFs} onToggle={toggleFullscreen} /><div className="text-[10px] mt-1 text-blue-300">{loopOn ? (`Rep ${loopCount}`) : ''}</div></div>
+                  <div className="flex flex-col items-center"><FsButton isFs={isFs} onToggle={toggleFullscreen} /><div className="text-[10px] mt-1 text-blue-300">''</div></div>
                 </div>
               </div>
             </div>
@@ -875,7 +875,7 @@
               </div>
             </div>
 
-            <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V38</div>
+            <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V39</div>
           </main>
 
           {settingsOpen && (
