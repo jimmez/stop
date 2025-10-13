@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>V39 Stopwatch â€“ YouTube Playlist Timer</title>
+  <title>V40 Stopwatch â€“ YouTube Playlist Timer</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     html, body, #root { height: 100%; }
@@ -828,12 +828,12 @@
                   {formatDisplay(elapsed, secondsMode)}
                 </div>
                 {/* Reps on right */}
-                <div className="font-extrabold text-blue-200 drop-shadow" style={{ fontSize: '8vw' }}>
+                <div className="font-extrabold text-blue-200 drop-shadow ml-auto text-right" style={{ fontSize: '8vw' }}>
                   {`Rep ${loopCount}`}
                 </div>
-                <div className="px-5 py-4 border-t border-blue-900 flex justify-end"><button onClick={(e)=>{ e.stopPropagation(); setSettingsOpen(false); }} className="px-3 py-2 rounded-xl bg-blue-900/70 hover:bg-blue-800">Close</button></div>
-                <div className="mt-4 flex justify-end"><button onClick={() => setFlowOpen(false)} className="px-3 py-2 rounded-xl bg-blue-900/70 hover:bg-blue-800">Close</button></div>
-                <div className="mt-4 flex justify-end"><button onClick={() => setLoopOpen(false)} className="px-3 py-2 rounded-xl bg-blue-900/70 hover:bg-blue-800">Close</button></div>
+                
+                
+                
               </div>
             </div>
           )}
@@ -875,7 +875,7 @@
               </div>
             </div>
 
-            <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V39</div>
+            <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V40</div>
           </main>
 
           {settingsOpen && (
@@ -1192,3 +1192,5 @@
   </script>
 </body>
 </html>
+
+  
