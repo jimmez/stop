@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>V52 Stopwatch â€“ YouTube Playlist Timer</title>
+  <title>V59 Stopwatch â€“ YouTube Playlist Timer</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     html, body, #root { height: 100%; }
@@ -237,7 +237,11 @@
       const [settingsOpen, setSettingsOpen] = useState(false);
       const [lengthsOpen, setLengthsOpen] = useState(false);
 
-      const playerRef = useRef(null);
+      
+      // Track YT played time to enforce kill time across pause/resume
+      const ytPlayedMsRef = useRef(0);       // total played in this loop window
+      const ytResumeStartRef = useRef(null); // when we last started/resumed playing
+    const playerRef = useRef(null);
       const playerReadyRef = useRef(false);
       const playlistLoadedRef = useRef(false);
       const musicStopTimeoutRef = useRef(null);
@@ -581,7 +585,8 @@
     
 
       const clearMusicTimer = useCallback(() => { if (musicStopTimeoutRef.current) { clearTimeout(musicStopTimeoutRef.current); musicStopTimeoutRef.current = null; } }, []);
-      const stopMusicOnly = useCallback((e) => { e?.stopPropagation?.(); clearMusicTimer(); try { playerRef.current?.mute?.(); playerRef.current?.setVolume?.(0); playerRef.current?.stopVideo?.(); } catch(_) {} }, [clearMusicTimer]);
+      const scheduleMusicStopIn = useCallback((ms) => { clearMusicTimer(); if (typeof ms === 'number' && ms > 0) { musicStopTimeoutRef.current = setTimeout(() => { try { playerRef.current?.pauseVideo(); } catch(_) {} musicStopTimeoutRef.current = null; }, ms); } }, [clearMusicTimer]);
+      const stopMusicOnly = useCallback((e) => { e?.stopPropagation?.(); clearMusicTimer(); try { if (ytResumeStartRef.current != null) { ytPlayedMsRef.current += Math.max(0, performance.now() - ytResumeStartRef.current); ytResumeStartRef.current = null; } playerRef.current?.mute?.(); playerRef.current?.setVolume?.(0); playerRef.current?.stopVideo?.(); } catch(_) {} }, [clearMusicTimer]);
       const rescheduleMusicStop = useCallback(() => {
         clearMusicTimer();
         if (typeof musicLenMs === 'number' && musicLenMs > 0) {
@@ -592,11 +597,14 @@
         const p = playerRef.current; if (!p) return;
         try {
           if (ytMuted) { p.mute?.(); p.setVolume?.(0); p.stopVideo?.(); return; }
-          p.unMute?.(); p.setVolume?.(ytVol); p.playVideo?.();
+          p.unMute?.(); p.setVolume?.(ytVol); p.playVideo?.(); ytResumeStartRef.current = performance.now();
           setTimeout(() => { try { const st = p.getPlayerState?.(); if (st !== 1) { if (ytMuted) { p.mute?.(); p.setVolume?.(0); p.stopVideo?.(); } else { p.mute?.(); p.playVideo?.(); setTimeout(() => { try { p.unMute?.(); p.setVolume?.(ytVol); } catch(_) {} }, 350); } } } catch(_) {} }, 250);
         } catch(_) {}
       }, [ytMuted, ytVol]);
       const ensureLoadedAndPlay = useCallback(() => {
+        // reset YT played tracking at loop start
+        ytPlayedMsRef.current = 0;
+        ytResumeStartRef.current = performance.now();
         if (ytMuted) { try { playerRef.current?.stopVideo?.(); } catch(_) {} return; }
         if (!playerReadyRef.current || !playerRef.current || !activePlaylistId) return;
         const p = playerRef.current;
@@ -606,14 +614,14 @@
           else if (mode === 'Next+Shuffle') { p.setShuffle?.(true); p.nextVideo?.(); tryPlayWithUnmute(); }
           else { p.setShuffle?.(false); p.nextVideo?.(); tryPlayWithUnmute(); }
           setTimeout(() => { try { const data = p.getVideoData?.(); if (data?.title) setNowPlaying(data.title); } catch(_) {} }, 400);
-          rescheduleMusicStop();
+          scheduleMusicStopIn(typeof musicLenMs==='number' ? Math.max(0, musicLenMs - ytPlayedMsRef.current) : 0);
         } catch (e) { console.warn('YT play error:', e); }
       }, [activePlaylistId, mode, tryPlayWithUnmute, rescheduleMusicStop]);
 
       const playPrev = useCallback((e) => { e?.stopPropagation?.(); if (!playerReadyRef.current || !playerRef.current || !activePlaylistId) return;
-        const p = playerRef.current; try { if (!playlistLoadedRef.current) { p.loadPlaylist({ listType: 'playlist', list: activePlaylistId, index: 0 }); playlistLoadedRef.current = true; } p.previousVideo?.(); tryPlayWithUnmute(); rescheduleMusicStop(); } catch(_) {} }, [activePlaylistId, tryPlayWithUnmute, rescheduleMusicStop]);
+        const p = playerRef.current; try { if (!playlistLoadedRef.current) { p.loadPlaylist({ listType: 'playlist', list: activePlaylistId, index: 0 }); playlistLoadedRef.current = true; } p.previousVideo?.(); tryPlayWithUnmute(); scheduleMusicStopIn(typeof musicLenMs==='number' ? Math.max(0, musicLenMs - ytPlayedMsRef.current) : 0); } catch(_) {} }, [activePlaylistId, tryPlayWithUnmute, rescheduleMusicStop]);
       const playNext = useCallback((e) => { e?.stopPropagation?.(); if (!playerReadyRef.current || !playerRef.current || !activePlaylistId) return;
-        const p = playerRef.current; try { if (!playlistLoadedRef.current) { p.loadPlaylist({ listType: 'playlist', list: activePlaylistId, index: 0 }); playlistLoadedRef.current = true; } p.nextVideo?.(); tryPlayWithUnmute(); rescheduleMusicStop(); } catch(_) {} }, [activePlaylistId, tryPlayWithUnmute, rescheduleMusicStop]);
+        const p = playerRef.current; try { if (!playlistLoadedRef.current) { p.loadPlaylist({ listType: 'playlist', list: activePlaylistId, index: 0 }); playlistLoadedRef.current = true; } p.nextVideo?.(); tryPlayWithUnmute(); scheduleMusicStopIn(typeof musicLenMs==='number' ? Math.max(0, musicLenMs - ytPlayedMsRef.current) : 0); } catch(_) {} }, [activePlaylistId, tryPlayWithUnmute, rescheduleMusicStop]);
 
       const tick = useCallback((now) => {
         if (!running || paused) return;
@@ -711,17 +719,31 @@
         e?.stopPropagation?.();
         if (locked) return;
         if (!paused) {
-          // going to pause -> kill YT sound immediately
+          // going to pause -> kill YT sound immediately and accumulate played time
           setPaused(true);
-          try { playerRef.current?.mute?.(); playerRef.current?.setVolume?.(0); playerRef.current?.pauseVideo?.(); } catch(_) {}
+          try {
+            if (ytResumeStartRef.current != null) {
+              ytPlayedMsRef.current += Math.max(0, performance.now() - ytResumeStartRef.current);
+              ytResumeStartRef.current = null;
+            }
+            playerRef.current?.mute?.(); playerRef.current?.setVolume?.(0); playerRef.current?.pauseVideo?.();
+          } catch(_) {}
           if (extraStartRef.current != null) { extraAccumRef.current += performance.now() - extraStartRef.current; extraStartRef.current = null; }
         } else {
-          // resume
+          // resume: continue clip but enforce remaining kill time
           setPaused(false);
           startTimeRef.current = performance.now() - elapsed;
           extraStartRef.current = performance.now();
+          const remaining = (typeof musicLenMs==='number') ? Math.max(0, musicLenMs - ytPlayedMsRef.current) : 0;
+          if (remaining <= 0 || ytMuted) {
+            // no remaining window or globally muted: keep YT silent/stopped
+            try { playerRef.current?.mute?.(); playerRef.current?.setVolume?.(0); playerRef.current?.pauseVideo?.(); } catch(_) {}
+          } else {
+            try { playerRef.current?.unMute?.(); playerRef.current?.setVolume?.(ytVol); playerRef.current?.playVideo?.(); ytResumeStartRef.current = performance.now(); } catch(_) {}
+            scheduleMusicStopIn(remaining);
+          }
         }
-      }, [paused, elapsed, locked]);
+      }, [paused, elapsed, locked, ytMuted, ytVol, musicLenMs, scheduleMusicStopIn]);
     const setQuickLen = useCallback((ms, e) => { e?.stopPropagation?.(); if (locked) return; setMusicLenMs(Math.min(ms, Math.max(0, loopSecs*1000))); }, [locked, loopSecs]);
 
       useEffect(() => {
@@ -914,9 +936,24 @@
           )}
 
             <div className="fixed bottom-0 left-0 w-full" style={{ height: '10vh' }} onClick={(e) => { e.stopPropagation(); if (locked) return; if (controlsVisible) { setPinned(false); hideControls(); } else { showControls(13000); } }} />
-            <button onClick={handlePauseAndKillYT} className="fixed bottom-6 left-[44%] -translate-x-1/2 w-14 h-14 rounded-full bg-red-600 hover:bg-red-500 shadow-lg active:scale-95 transition" title="Pause/Resume (kills YT on pause)"></button>
+            
+<div className="fixed bottom-[9%] left-0 right-0 flex justify-start items-center px-4 z-30">
+  <button onClick={(e)=>{ e.stopPropagation(); setLocked(l=>!l); showControls(13000); }} 
+          className="absolute left-4 px-4 py-3 rounded-xl bg-yellow-500 hover:bg-yellow-400 text-black shadow">
+    {locked ? "Unlock" : "Lock"}
+  </button>
 
-            <button onClick={(e) => { e.stopPropagation(); if (locked) return; if (controlsVisible) { setPinned(false); hideControls(); } else { showControls(13000); } }} className="fixed bottom-6 left-1/2 -translate-x-1/2 w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-500 shadow-lg active:scale-95 transition" title="Show/Hide controls"></button>
+  <button onClick={handlePauseAndKillYT} 
+          className="absolute left-[25%] px-4 py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white shadow">
+    {paused ? "Resume" : "Pause/Res"}
+  </button>
+
+  <button onClick={(e) => { e.stopPropagation(); if (locked) return; if (controlsVisible) { setPinned(false); hideControls(); } else { showControls(13000); } }} 
+          className="absolute left-1/2 -translate-x-1/2 px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow">
+    {controlsVisible ? "Hide" : "Show"}
+  </button>
+</div>
+
 
             <div className="grid place-items-center" style={{ marginTop: '25vh' }} onClick={(e) => { e.stopPropagation(); if (locked) return; resetStopwatchAndMusic(); }}>
               <div ref={digitsRef} className="text-[20vw] md:text-[12rem] leading-none font-extrabold drop-shadow" style={{ color: '#93C5FD', textShadow: '0 0 12px rgba(147,197,253,0.15)' }} aria-live="polite">
@@ -1000,7 +1037,7 @@
               </div>
             </div>
 
-            <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V52</div>
+            <div className="absolute bottom-3 right-4 text-xs font-semibold" style={{ color: '#60A5FA' }}>V59</div>
           </main>
 
           {settingsOpen && (
